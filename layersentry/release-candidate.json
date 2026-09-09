@@ -1,0 +1,21 @@
+{
+  "product": "LayerSentry CSI",
+  "scope": "OpenNebula-managed Kubernetes volumes",
+  "upstream_repository": "OpenNebula/storage-provider-opennebula",
+  "source_repository": "adaptgurus/storage-provider-opennebula",
+  "observed_base_commit": "e19da4f7aff09959ab5b796693e80d24d255304c",
+  "build_tag": "layersentry",
+  "new_install_identity": "csi.layersentry.io",
+  "legacy_identity": "csi.opennebula.io",
+  "status": "INITIAL_SOURCE_PARTIAL",
+  "deployable": false,
+  "image_digest": null,
+  "full_go_build": "NOT_TESTED",
+  "helm_identity_wiring": "PENDING",
+  "isolated_flag_unit_tests": "3_PASSED",
+  "shell_syntax": "PASSED",
+  "csi_conformance": "NOT_TESTED",
+  "live_data_survival": "NOT_TESTED",
+  "legacy_volume_migration": "NOT_TESTED",
+  "production_certified": false
+}
