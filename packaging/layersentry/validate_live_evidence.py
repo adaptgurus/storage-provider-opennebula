@@ -77,14 +77,16 @@ def matrix_records(matrix: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def validate_live_evidence(
-    matrix: dict[str, Any], release_lock: dict[str, Any], root: Path
+    matrix: dict[str, Any],
+    release_lock: dict[str, Any],
+    root: Path,
+    expected_release_lock_sha256: str,
 ) -> list[str]:
     errors: list[str] = []
     records = matrix_records(matrix)
     release = release_lock.get("release") or {}
     rke2 = release_lock.get("rke2") or {}
     images = release_lock.get("images") or {}
-    lock_sha = hashlib.sha256(json.dumps(release_lock, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     run_ids: set[str] = set()
     storage_classes: set[str] = set()
@@ -155,12 +157,8 @@ def validate_live_evidence(
         )
     if len(identity_lock_hashes) != 1:
         errors.append("baseline/final release identity evidence must share one release_lock_sha256")
-
-    # verify_live_release hashes the exact release-lock bytes. JSON-normalized hash
-    # above is intentionally not compared because whitespace is meaningful to that
-    # file hash. Instead both identity checkpoints must carry the same exact hash,
-    # and the production gate separately validates the frozen release-lock content.
-    del lock_sha
+    elif next(iter(identity_lock_hashes)) != expected_release_lock_sha256:
+        errors.append("baseline/final release identity evidence does not match the exact frozen release-lock bytes")
     return errors
 
 
@@ -172,8 +170,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         matrix = load_object(args.matrix)
-        release_lock = load_release_lock(args.release_lock.resolve())
-        errors = validate_live_evidence(matrix, release_lock, args.evidence_root.resolve())
+        lock_path = args.release_lock.resolve()
+        release_lock = load_release_lock(lock_path)
+        lock_sha = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+        errors = validate_live_evidence(
+            matrix,
+            release_lock,
+            args.evidence_root.resolve(),
+            lock_sha,
+        )
     except (EvidenceError, OSError, ValueError) as exc:
         print(f"LIVE_EVIDENCE_NOT_QUALIFIED: {exc}")
         return 2
