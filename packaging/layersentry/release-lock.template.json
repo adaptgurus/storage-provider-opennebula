@@ -1,7 +1,7 @@
 {
   "rke2": {
-    "version": "v1.36.3+rke2r1",
-    "commit": "c4f306e6c5fa18dfb447bf6b8a0423f2da68c939",
+    "version": "v1.36.4+rke2r1",
+    "commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
     "kubeletRootDir": "/var/lib/kubelet"
   },
   "images": {
