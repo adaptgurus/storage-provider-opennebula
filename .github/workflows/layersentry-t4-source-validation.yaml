@@ -101,6 +101,7 @@ jobs:
           grep -q 'name: csi.opennebula.io' "${RUNNER_TEMP}/legacy.yaml"
           grep -q '/plugins/csi.opennebula.io/csi.sock' "${RUNNER_TEMP}/legacy.yaml"
           grep -q 'name: csi-resizer' "${RUNNER_TEMP}/legacy.yaml"
+          ! grep -q 'readinessProbe:' "${RUNNER_TEMP}/legacy.yaml"
 
       - name: Build digest-locked LayerSentry candidate and render identity
         run: |
@@ -155,6 +156,9 @@ jobs:
           grep -q 'csi-attacher:v4.13.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'csi-node-driver-registrar:v2.18.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          test "$(grep -c 'livenessProbe:' "${RUNNER_TEMP}/layersentry.yaml")" -ge 2
+          test "$(grep -c 'readinessProbe:' "${RUNNER_TEMP}/layersentry.yaml")" -ge 2
+          grep -q 'path: /healthz' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'name: csi-resizer' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'csi-resizer:' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'csi-resizer' "${RUNNER_TEMP}/offline-images.txt"
@@ -179,6 +183,10 @@ jobs:
 
           expect_reject 'forbids credentials.inlineAuth' \
             --set-string credentials.inlineAuth=ci:forbidden
+
+          expect_reject 'multi-controller topology is not qualified' \
+            --set credentials.existingSecret.name=layersentry-ci-auth \
+            --set controller.replicaCount=2
 
           expect_reject 'resizer.enabled must remain false' \
             --set credentials.existingSecret.name=layersentry-ci-auth \
