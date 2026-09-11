@@ -8,9 +8,10 @@ from build_chart import (
     LAYERSENTRY,
     LEGACY,
     TARGET_DRIVER_IMAGE,
+    TARGET_REQUIRED_SIDECAR_IMAGES,
+    TARGET_RESIZER_IMAGE,
     TARGET_RKE2_COMMIT,
     TARGET_RKE2_VERSION,
-    TARGET_SIDECAR_IMAGES,
     build_profile,
     load_release_lock,
     validate_identity_source,
@@ -48,7 +49,9 @@ class PackagingTests(unittest.TestCase):
     def release_lock(self):
         digest = "a" * 64
         images = {"driver": f"{TARGET_DRIVER_IMAGE}@sha256:{digest}"}
-        images.update({name: f"{image}@sha256:{digest}" for name, image in TARGET_SIDECAR_IMAGES.items()})
+        images.update(
+            {name: f"{image}@sha256:{digest}" for name, image in TARGET_REQUIRED_SIDECAR_IMAGES.items()}
+        )
         return {
             "rke2": {
                 "version": TARGET_RKE2_VERSION,
@@ -89,25 +92,29 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_identity_source(data)
 
-    def test_pinned_profile_uses_single_identity(self):
+    def test_pinned_profile_uses_single_identity_and_disables_unqualified_sidecars(self):
         profile = build_profile(self.release_lock())
         self.assertEqual(profile["driver"], {"name": LAYERSENTRY})
         self.assertEqual(profile["kubelet"]["rootDir"], "/var/lib/kubelet")
+        self.assertFalse(profile["resizer"]["enabled"])
         self.assertFalse(profile["snapshotter"]["enabled"])
         self.assertEqual(profile["snapshotClasses"], [])
         self.assertEqual(profile["storageClasses"], [])
         self.assertNotIn("extraArgs", profile["driver"])
+        self.assertNotIn("resizer", profile["sidecars"])
 
-    def test_sidecars_remain_reviewed_and_digest_pinned_in_profile(self):
+    def test_enabled_sidecars_remain_reviewed_and_digest_pinned_in_profile(self):
         lock = self.release_lock()
         profile = build_profile(lock)
         for name, config in profile["sidecars"].items():
             self.assertEqual(config["image"], lock["images"][name])
-            self.assertTrue(config["image"].startswith(TARGET_SIDECAR_IMAGES[name] + "@sha256:"))
+            self.assertTrue(
+                config["image"].startswith(TARGET_REQUIRED_SIDECAR_IMAGES[name] + "@sha256:")
+            )
 
     def test_release_lock_rejects_floating_image(self):
         data = self.release_lock()
-        data["images"]["attacher"] = TARGET_SIDECAR_IMAGES["attacher"]
+        data["images"]["attacher"] = TARGET_REQUIRED_SIDECAR_IMAGES["attacher"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lock.json"
             path.write_text(json.dumps(data))
@@ -144,6 +151,15 @@ class PackagingTests(unittest.TestCase):
     def test_release_lock_rejects_unqualified_expansion_advertising(self):
         data = self.release_lock()
         data["capabilities"]["expansion"] = True
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
+
+    def test_release_lock_rejects_resizer_when_expansion_disabled(self):
+        data = self.release_lock()
+        data["images"]["resizer"] = TARGET_RESIZER_IMAGE + "@sha256:" + "b" * 64
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lock.json"
             path.write_text(json.dumps(data))
