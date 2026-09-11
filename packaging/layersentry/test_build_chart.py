@@ -1,51 +1,131 @@
 # SPDX-License-Identifier: Apache-2.0
+import json
+import tempfile
 import unittest
-from build_chart import OLD, NEW, transform_templates, build_profile
+from pathlib import Path
+
+from build_chart import (
+    LAYERSENTRY,
+    LEGACY,
+    TARGET_RKE2_COMMIT,
+    TARGET_RKE2_VERSION,
+    build_profile,
+    load_release_lock,
+    validate_identity_source,
+)
+
 
 class PackagingTests(unittest.TestCase):
-    def fixture(self):
-        return {"csi-driver.yaml": f"name: {OLD}\n",
-                "csi-node-server.yaml": f"path: /plugins/{OLD}\npath: /plugins/{OLD}/csi.sock\n",
-                "csi-storageclass.yaml": f"provisioner: {OLD}\n",
-                "_helpers.tpl": "storageprovider.opennebula.io\n"}
+    def identity_fixture(self):
+        return {
+            "_identity.tpl": (
+                '{{- define "opennebula-csi.driverName" -}}\n'
+                f'{{{{- default "{LEGACY}" .Values.driver.name -}}}}\n'
+                "{{- end -}}\n"
+            ),
+            "csi-driver.yaml": 'name: {{ include "opennebula-csi.driverName" . }}\n',
+            "csi-storageclass.yaml": 'provisioner: {{ include "opennebula-csi.driverName" $root }}\n',
+            "csi-controller-server.yaml": (
+                '- "--drivername={{ include \\"opennebula-csi.driverName\\" . }}"\n'
+            ),
+            "csi-node-server.yaml": (
+                '- "--drivername={{ include \\"opennebula-csi.driverName\\" . }}"\n'
+                'path: {{ include "opennebula-csi.kubeletPluginDir" . }}\n'
+                'path: {{ include "opennebula-csi.kubeletRegistrationDir" . }}\n'
+            ),
+        }
 
-    def test_identity_consistency(self):
-        result = transform_templates(self.fixture())
-        self.assertEqual(sum(v.count(NEW) for v in result.values()), 4)
-        self.assertNotIn(OLD, "".join(result.values()))
+    def release_lock(self):
+        digest = "a" * 64
+        return {
+            "rke2": {
+                "version": TARGET_RKE2_VERSION,
+                "commit": TARGET_RKE2_COMMIT,
+                "kubeletRootDir": "/var/lib/kubelet",
+            },
+            "images": {
+                "driver": f"ghcr.io/adaptgurus/layersentry-csi:v0.5.15-ls.1@sha256:{digest}",
+                "provisioner": f"registry.k8s.io/sig-storage/csi-provisioner:v5.3.0@sha256:{digest}",
+                "attacher": f"registry.k8s.io/sig-storage/csi-attacher:v4.9.0@sha256:{digest}",
+                "resizer": f"registry.k8s.io/sig-storage/csi-resizer:v1.13.2@sha256:{digest}",
+                "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0@sha256:{digest}",
+                "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.16.0@sha256:{digest}",
+            },
+            "capabilities": {"snapshots": False, "clones": False},
+        }
 
-    def test_preserves_provider_api_group(self):
-        self.assertEqual(transform_templates(self.fixture())["_helpers.tpl"], "storageprovider.opennebula.io\n")
+    def test_identity_source_is_consistent(self):
+        validate_identity_source(self.identity_fixture())
 
-    def test_missing_template_rejected(self):
-        data = self.fixture(); del data["csi-driver.yaml"]
-        with self.assertRaises(ValueError): transform_templates(data)
+    def test_hard_coded_layersentry_identity_rejected(self):
+        data = self.identity_fixture()
+        data["csi-driver.yaml"] += LAYERSENTRY
+        with self.assertRaises(ValueError):
+            validate_identity_source(data)
 
-    def test_source_drift_rejected(self):
-        data = self.fixture(); data["csi-node-server.yaml"] += OLD
-        with self.assertRaises(ValueError): transform_templates(data)
+    def test_hard_coded_legacy_identity_rejected_outside_helper(self):
+        data = self.identity_fixture()
+        data["csi-storageclass.yaml"] += LEGACY
+        with self.assertRaises(ValueError):
+            validate_identity_source(data)
 
-    def test_source_not_mutated(self):
-        data = self.fixture(); transform_templates(data)
-        self.assertIn(OLD, data["csi-driver.yaml"])
+    def test_missing_identity_surface_rejected(self):
+        data = self.identity_fixture()
+        del data["csi-node-server.yaml"]
+        with self.assertRaises(ValueError):
+            validate_identity_source(data)
 
-    def test_pinned_profile(self):
-        p = build_profile("ghcr.io/adaptgurus/layersentry-csi", "dev@sha256:" + "a" * 64)
-        self.assertEqual(p["driver"]["extraArgs"], ["--drivername=" + NEW])
-        self.assertFalse(p["snapshotter"]["enabled"])
-        self.assertEqual(p["storageClasses"], [])
+    def test_pinned_profile_uses_single_identity(self):
+        profile = build_profile(self.release_lock())
+        self.assertEqual(profile["driver"], {"name": LAYERSENTRY})
+        self.assertEqual(profile["kubelet"]["rootDir"], "/var/lib/kubelet")
+        self.assertFalse(profile["snapshotter"]["enabled"])
+        self.assertEqual(profile["storageClasses"], [])
+        self.assertNotIn("extraArgs", profile["driver"])
 
-    def test_floating_image_rejected(self):
-        with self.assertRaises(ValueError): build_profile("ghcr.io/adaptgurus/layersentry-csi", "latest")
+    def test_sidecars_remain_digest_pinned_in_profile(self):
+        lock = self.release_lock()
+        profile = build_profile(lock)
+        for name, config in profile["sidecars"].items():
+            self.assertEqual(config["image"], lock["images"][name])
+            self.assertIn("@sha256:", config["image"])
 
-    def test_tag_in_repository_rejected(self):
-        with self.assertRaises(ValueError): build_profile("registry.test/driver:old", "dev@sha256:" + "a" * 64)
+    def test_release_lock_rejects_floating_image(self):
+        data = self.release_lock()
+        data["images"]["attacher"] = "registry.k8s.io/sig-storage/csi-attacher:v4.9.0"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
 
-    def test_registry_port_allowed(self):
-        self.assertEqual(build_profile("registry.test:5000/team/driver", "dev@sha256:" + "a" * 64)["image"]["repository"], "registry.test:5000/team/driver")
+    def test_release_lock_rejects_wrong_rke2_version(self):
+        data = self.release_lock()
+        data["rke2"]["version"] = "v1.35.0+rke2r1"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
 
-    def test_invalid_repository_rejected(self):
-        with self.assertRaises(ValueError): build_profile("repo bad", "dev@sha256:" + "a" * 64)
+    def test_release_lock_rejects_unqualified_snapshot_advertising(self):
+        data = self.release_lock()
+        data["capabilities"]["snapshots"] = True
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
+
+    def test_release_lock_rejects_snapshotter_when_snapshots_disabled(self):
+        data = self.release_lock()
+        data["images"]["snapshotter"] = "registry.k8s.io/sig-storage/csi-snapshotter:v8.2.1@sha256:" + "b" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
+
 
 if __name__ == "__main__":
     unittest.main()
