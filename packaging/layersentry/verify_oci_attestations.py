@@ -84,14 +84,18 @@ def _subject_matches(statement: dict[str, Any], reference_digest: str) -> bool:
     return False
 
 
-def verify_archive(path: Path) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+def verify_archive(
+    path: Path,
+) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]]:
     try:
         archive = tarfile.open(path, mode="r:*")
     except (OSError, tarfile.TarError) as exc:
         raise VerificationError(f"cannot open OCI archive {path}: {exc}") from exc
 
     with archive:
-        index = _json(_read_member(archive, "index.json"), "index.json")
+        index_bytes = _read_member(archive, "index.json")
+        index_digest = "sha256:" + hashlib.sha256(index_bytes).hexdigest()
+        index = _json(index_bytes, "index.json")
         manifests = index.get("manifests")
         if not isinstance(manifests, list) or not manifests:
             raise VerificationError("OCI index has no manifests")
@@ -170,7 +174,7 @@ def verify_archive(path: Path) -> tuple[str, list[dict[str, Any]], list[dict[str
         if not provenance:
             raise VerificationError("OCI image is missing a SLSA provenance attestation")
 
-        return runnable_digest, sboms, provenance
+        return index_digest, runnable_digest, sboms, provenance
 
 
 def main() -> int:
@@ -180,7 +184,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        runnable_digest, sboms, provenance = verify_archive(args.oci_archive)
+        index_digest, runnable_digest, sboms, provenance = verify_archive(args.oci_archive)
     except VerificationError as exc:
         print(f"ATTESTATION_VERIFICATION_FAILED: {exc}")
         return 1
@@ -188,9 +192,11 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "sbom-attestations.json").write_text(json.dumps(sboms, indent=2) + "\n")
     (args.output_dir / "provenance-attestations.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    (args.output_dir / "oci-index-digest.txt").write_text(index_digest + "\n")
     (args.output_dir / "image-manifest-digest.txt").write_text(runnable_digest + "\n")
     print(
-        f"ATTESTATIONS_VERIFIED image={runnable_digest} sbom={len(sboms)} provenance={len(provenance)}"
+        "ATTESTATIONS_VERIFIED "
+        f"index={index_digest} image={runnable_digest} sbom={len(sboms)} provenance={len(provenance)}"
     )
     return 0
 
