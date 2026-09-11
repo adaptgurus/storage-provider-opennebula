@@ -47,7 +47,12 @@ jobs:
 
       - name: Packaging and promotion-gate unit tests
         working-directory: packaging/layersentry
-        run: python3 -m unittest -v test_build_chart.py test_validate_qualification.py
+        run: |
+          python3 -m unittest -v \
+            test_build_chart.py \
+            test_validate_qualification.py \
+            test_verify_oci_attestations.py
+          bash -n build_release.sh
 
       - name: Current qualification matrix must not pass production promotion
         run: |
