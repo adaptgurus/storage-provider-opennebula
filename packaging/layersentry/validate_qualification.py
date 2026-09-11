@@ -17,6 +17,13 @@ DRIVER_IDENTITY = "csi.layersentry.io"
 TARGET_KUBERNETES = "1.36.4"
 TARGET_RKE2 = "v1.36.4+rke2r1"
 TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
+EXPECTED_IMAGE_TAGS = {
+    "driver": "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1",
+    "provisioner": "registry.k8s.io/sig-storage/csi-provisioner:v6.3.0",
+    "attacher": "registry.k8s.io/sig-storage/csi-attacher:v4.13.0",
+    "nodeDriverRegistrar": "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0",
+    "livenessProbe": "registry.k8s.io/sig-storage/livenessprobe:v2.20.0",
+}
 
 MANDATORY_LIVE_TESTS = (
     "install",
@@ -47,11 +54,7 @@ OPTIONAL_CAPABILITY_TESTS = {
     "clones": ("clone",),
 }
 
-NOT_OFFERED_PREFIXES = (
-    "NOT_OFFERED",
-    "NOT_ADVERTISED",
-)
-
+NOT_OFFERED_PREFIXES = ("NOT_OFFERED", "NOT_ADVERTISED")
 DIGEST_IMAGE = re.compile(r"^\S+:[^/@\s]+@sha256:[0-9a-f]{64}$")
 
 
@@ -81,7 +84,6 @@ def test_map(matrix: dict[str, Any], errors: list[str]) -> dict[str, dict[str, A
     if not isinstance(tests, list):
         errors.append("qualification matrix tests must be a list")
         return {}
-
     mapped: dict[str, dict[str, Any]] = {}
     for record in tests:
         if not isinstance(record, dict):
@@ -96,6 +98,35 @@ def test_map(matrix: dict[str, Any], errors: list[str]) -> dict[str, dict[str, A
             continue
         mapped[test_id] = record
     return mapped
+
+
+def expected_release_images(release_lock: dict[str, Any]) -> list[str]:
+    images = release_lock.get("images") or {}
+    return [str(images.get(name) or "").strip() for name in EXPECTED_IMAGE_TAGS]
+
+
+def validate_images(release_lock: dict[str, Any], errors: list[str]) -> None:
+    images = release_lock.get("images")
+    if not isinstance(images, dict):
+        errors.append("release lock images must be an object")
+        return
+    expected_keys = set(EXPECTED_IMAGE_TAGS)
+    actual_keys = set(images)
+    missing = sorted(expected_keys - actual_keys)
+    unexpected = sorted(actual_keys - expected_keys)
+    if missing:
+        errors.append(f"release lock is missing required images: {missing}")
+    if unexpected:
+        errors.append(
+            f"release lock contains images for disabled/unreviewed components: {unexpected}"
+        )
+    for name, expected_tag in EXPECTED_IMAGE_TAGS.items():
+        value = str(images.get(name) or "").strip()
+        if not DIGEST_IMAGE.fullmatch(value):
+            errors.append(f"release lock images.{name} must be image:tag@sha256:<digest>")
+            continue
+        if not value.startswith(expected_tag + "@sha256:"):
+            errors.append(f"release lock images.{name} must use reviewed tag {expected_tag}")
 
 
 def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any]) -> list[str]:
@@ -115,6 +146,8 @@ def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any])
     root_dir = str(rke2.get("kubeletRootDir") or "").strip()
     if not root_dir.startswith("/") or root_dir == "/":
         errors.append("release lock rke2.kubeletRootDir must be an absolute non-root path")
+
+    validate_images(release_lock, errors)
 
     profile = str(matrix.get("selected_storage_profile") or "").strip()
     if not profile:
@@ -166,16 +199,12 @@ def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any])
 
     images = release_lock.get("images") or {}
     driver_image = str(images.get("driver") or "").strip()
-    if not DIGEST_IMAGE.fullmatch(driver_image):
-        errors.append("release lock images.driver must be immutable image:tag@sha256:<digest>")
-
     artifacts = matrix.get("release_artifacts") or {}
     if artifacts.get("driver_image_digest") != driver_image:
         errors.append("release_artifacts.driver_image_digest must equal the release lock driver image")
     for field in ("sbom", "provenance", "offline_image_manifest"):
         if not str(artifacts.get(field) or "").strip():
             errors.append(f"release_artifacts.{field} must reference generated immutable evidence")
-
     return errors
 
 
@@ -185,16 +214,24 @@ def referenced_evidence_paths(matrix: dict[str, Any], release_lock: dict[str, An
         text = str(value).strip()
         if text:
             yield text
-
     for record in matrix.get("tests") or []:
         if isinstance(record, dict) and record.get("status") == "PASS":
             yield from evidence_values(record)
-
     artifacts = matrix.get("release_artifacts") or {}
     for field in ("sbom", "provenance", "offline_image_manifest"):
         text = str(artifacts.get(field) or "").strip()
         if text:
             yield text
+
+
+def resolve_evidence_path(root: Path, reference: str) -> Path | None:
+    path = Path(reference)
+    if path.is_absolute():
+        return None
+    resolved = (root / path).resolve()
+    if resolved != root and root not in resolved.parents:
+        return None
+    return resolved
 
 
 def validate_materialized_evidence(
@@ -207,13 +244,9 @@ def validate_materialized_evidence(
         if reference in seen:
             continue
         seen.add(reference)
-        path = Path(reference)
-        if path.is_absolute():
-            errors.append(f"evidence reference must be repository-relative, not absolute: {reference}")
-            continue
-        resolved = (root / path).resolve()
-        if resolved != root and root not in resolved.parents:
-            errors.append(f"evidence reference escapes evidence root: {reference}")
+        resolved = resolve_evidence_path(root, reference)
+        if resolved is None:
+            errors.append(f"evidence reference must be repository-relative and contained: {reference}")
             continue
         if not resolved.is_file():
             errors.append(f"evidence file does not exist: {reference}")
@@ -223,6 +256,19 @@ def validate_materialized_evidence(
                 errors.append(f"evidence file is empty: {reference}")
         except OSError as exc:
             errors.append(f"cannot stat evidence file {reference}: {exc}")
+
+    offline_ref = str((matrix.get("release_artifacts") or {}).get("offline_image_manifest") or "").strip()
+    if offline_ref:
+        offline_path = resolve_evidence_path(root, offline_ref)
+        if offline_path is not None and offline_path.is_file():
+            lines = [line.strip() for line in offline_path.read_text().splitlines() if line.strip()]
+            expected = expected_release_images(release_lock)
+            if len(lines) != len(set(lines)):
+                errors.append("offline image manifest must not contain duplicate image references")
+            if lines != expected:
+                errors.append(
+                    "offline image manifest must exactly match the ordered enabled image set in release-lock.json"
+                )
     return errors
 
 
@@ -244,7 +290,7 @@ def main() -> int:
         errors = validate_qualification(matrix, release_lock)
         if not errors:
             errors.extend(validate_materialized_evidence(matrix, release_lock, args.evidence_root))
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(f"NOT_QUALIFIED: {exc}")
         return 2
 
