@@ -13,6 +13,7 @@
     "livenessProbe": "registry.k8s.io/sig-storage/livenessprobe:v2.16.0@sha256:REPLACE_WITH_64_LOWERCASE_HEX"
   },
   "capabilities": {
+    "expansion": false,
     "snapshots": false,
     "clones": false
   },
