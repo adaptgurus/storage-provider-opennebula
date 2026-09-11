@@ -67,8 +67,6 @@ jobs:
             exit 1
           }
 
-          # A release-evidence commit may follow the binary source commit, but
-          # executable/chart/workflow code must not change after the image was built.
           while IFS= read -r path; do
             test -n "$path" || continue
             case "$path" in
@@ -94,6 +92,10 @@ jobs:
             --matrix packaging/layersentry/qualification-matrix.json \
             --release-lock packaging/layersentry/release-lock.json \
             --evidence-root .
+          python3 packaging/layersentry/validate_live_evidence.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.json \
+            --evidence-root .
 
       - name: Confirm immutable offline image manifest
         run: |
@@ -115,4 +117,4 @@ jobs:
       - name: Production gate passed
         run: |
           echo "LayerSentry CSI source/evidence gate passed for $GITHUB_SHA."
-          echo "The release tag is bound to the frozen build source; this gate does not deploy or publish artifacts."
+          echo "The release tag, source provenance, exact deployment images and one live qualification run are bound together."
