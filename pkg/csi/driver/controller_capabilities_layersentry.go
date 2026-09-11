@@ -5,8 +5,8 @@ package driver
 
 import "github.com/container-storage-interface/spec/lib/go/csi"
 
-// LayerSentry deliberately advertises only the controller capabilities that are
-// in the current qualification scope. The underlying upstream engine contains
+// LayerSentry deliberately advertises only the capabilities that are in the
+// current qualification scope. The underlying upstream engine contains
 // additional backend-specific expansion, snapshot and clone paths, but those
 // capabilities must not be advertised by a LayerSentry release until a named
 // storage profile has passed the corresponding live qualification matrix.
@@ -14,6 +14,7 @@ import "github.com/container-storage-interface/spec/lib/go/csi"
 // This assignment affects only builds made with -tags layersentry. The untagged
 // upstream-compatible build retains its existing capability set.
 func init() {
+	pluginVolumeExpansionAdvertised = false
 	controllerCapabilityTypes = []csi.ControllerServiceCapability_RPC_Type{
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
