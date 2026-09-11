@@ -8,6 +8,8 @@ from build_chart import (
     LAYERSENTRY,
     LEGACY,
     TARGET_DRIVER_IMAGE,
+    TARGET_RELEASE_TAG,
+    TARGET_RELEASE_VERSION,
     TARGET_REQUIRED_SIDECAR_IMAGES,
     TARGET_RESIZER_IMAGE,
     TARGET_RKE2_COMMIT,
@@ -53,6 +55,11 @@ class PackagingTests(unittest.TestCase):
             {name: f"{image}@sha256:{digest}" for name, image in TARGET_REQUIRED_SIDECAR_IMAGES.items()}
         )
         return {
+            "release": {
+                "version": TARGET_RELEASE_VERSION,
+                "gitTag": TARGET_RELEASE_TAG,
+                "sourceCommit": "b" * 40,
+            },
             "rke2": {
                 "version": TARGET_RKE2_VERSION,
                 "commit": TARGET_RKE2_COMMIT,
@@ -61,6 +68,13 @@ class PackagingTests(unittest.TestCase):
             "images": images,
             "capabilities": {"expansion": False, "snapshots": False, "clones": False},
         }
+
+    def write_lock_and_reject(self, data):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
 
     def test_identity_source_is_consistent(self):
         validate_identity_source(self.identity_fixture())
@@ -112,77 +126,60 @@ class PackagingTests(unittest.TestCase):
                 config["image"].startswith(TARGET_REQUIRED_SIDECAR_IMAGES[name] + "@sha256:")
             )
 
+    def test_release_lock_rejects_wrong_release_version(self):
+        data = self.release_lock()
+        data["release"]["version"] = "0.5.15-layersentry.2"
+        self.write_lock_and_reject(data)
+
+    def test_release_lock_rejects_wrong_git_tag(self):
+        data = self.release_lock()
+        data["release"]["gitTag"] = "v0.5.15-layersentry.2"
+        self.write_lock_and_reject(data)
+
+    def test_release_lock_rejects_short_or_placeholder_source_commit(self):
+        data = self.release_lock()
+        data["release"]["sourceCommit"] = "REPLACE_WITH_40_LOWERCASE_HEX"
+        self.write_lock_and_reject(data)
+
     def test_release_lock_rejects_floating_image(self):
         data = self.release_lock()
         data["images"]["attacher"] = TARGET_REQUIRED_SIDECAR_IMAGES["attacher"]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_unreviewed_sidecar_tag(self):
         data = self.release_lock()
         data["images"]["provisioner"] = "registry.k8s.io/sig-storage/csi-provisioner:v5.3.0@sha256:" + "b" * 64
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_wrong_driver_tag(self):
         data = self.release_lock()
         data["images"]["driver"] = "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.0@sha256:" + "b" * 64
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_wrong_rke2_version(self):
         data = self.release_lock()
         data["rke2"]["version"] = "v1.35.0+rke2r1"
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_unqualified_expansion_advertising(self):
         data = self.release_lock()
         data["capabilities"]["expansion"] = True
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_resizer_when_expansion_disabled(self):
         data = self.release_lock()
         data["images"]["resizer"] = TARGET_RESIZER_IMAGE + "@sha256:" + "b" * 64
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_unqualified_snapshot_advertising(self):
         data = self.release_lock()
         data["capabilities"]["snapshots"] = True
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
     def test_release_lock_rejects_snapshotter_when_snapshots_disabled(self):
         data = self.release_lock()
         data["images"]["snapshotter"] = "registry.k8s.io/sig-storage/csi-snapshotter:v8.6.0@sha256:" + "b" * 64
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lock.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                load_release_lock(path)
+        self.write_lock_and_reject(data)
 
 
 if __name__ == "__main__":
