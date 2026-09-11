@@ -36,12 +36,6 @@ jobs:
         run: |
           go build -trimpath -tags layersentry ./cmd/opennebula-csi
           go test -tags layersentry ./cmd/opennebula-csi
-          # The inherited untagged driver suite intentionally asserts the
-          # upstream capability surface (clone + online expansion). The
-          # LayerSentry build deliberately suppresses those RPC capabilities
-          # until backend qualification, so run the dedicated LayerSentry
-          # profile/reconciliation tests under the tag instead of asking the
-          # mutually-exclusive upstream assertions to pass in this profile.
           go test -tags layersentry ./pkg/csi/driver \
             -run '^(TestLayerSentry|TestAttachmentReconciler)'
 
@@ -94,6 +88,7 @@ jobs:
             --set-string credentials.inlineAuth=ci:placeholder > "${RUNNER_TEMP}/legacy.yaml"
           grep -q 'name: csi.opennebula.io' "${RUNNER_TEMP}/legacy.yaml"
           grep -q '/plugins/csi.opennebula.io/csi.sock' "${RUNNER_TEMP}/legacy.yaml"
+          grep -q 'name: csi-resizer' "${RUNNER_TEMP}/legacy.yaml"
 
       - name: Build digest-locked LayerSentry candidate and render identity
         run: |
@@ -111,7 +106,6 @@ jobs:
                   "driver": f"ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1@sha256:{digest}",
                   "provisioner": f"registry.k8s.io/sig-storage/csi-provisioner:v6.3.0@sha256:{digest}",
                   "attacher": f"registry.k8s.io/sig-storage/csi-attacher:v4.13.0@sha256:{digest}",
-                  "resizer": f"registry.k8s.io/sig-storage/csi-resizer:v2.2.1@sha256:{digest}",
                   "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0@sha256:{digest}",
                   "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.20.0@sha256:{digest}",
               },
@@ -138,9 +132,10 @@ jobs:
           grep -q '/plugins/csi.layersentry.io/csi.sock' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'csi-provisioner:v6.3.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'csi-attacher:v4.13.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'csi-resizer:v2.2.1@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'csi-node-driver-registrar:v2.18.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -q 'name: csi-resizer' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -q 'csi-resizer:' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
 
       - name: Reject unsafe LayerSentry site overrides
@@ -162,6 +157,10 @@ jobs:
           expect_reject 'forbids credentials.inlineAuth' \
             --set-string credentials.inlineAuth=ci:forbidden
 
+          expect_reject 'resizer.enabled must remain false' \
+            --set credentials.existingSecret.name=layersentry-ci-auth \
+            --set resizer.enabled=true
+
           expect_reject 'allowVolumeExpansion must remain false' \
             --set credentials.existingSecret.name=layersentry-ci-auth \
             --set 'storageClasses[0].name=unsafe-expand' \
@@ -177,6 +176,8 @@ jobs:
           helm template invalid helm/opennebula-csi \
             --set driver.name=csi.layersentry.io \
             --set credentials.existingSecret.name=layersentry-ci-auth \
+            --set resizer.enabled=false \
+            --set snapshotter.enabled=false \
             --set 'driver.extraArgs[0]=--drivername=csi.other.example' > /tmp/invalid.out 2>&1
           rc=$?
           set -e
