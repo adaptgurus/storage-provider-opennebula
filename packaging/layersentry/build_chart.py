@@ -3,8 +3,9 @@
 
 Standard library only. The source chart is copied without string replacement.
 A release lock is mandatory and all enabled images must be immutable digest
-references. Generated output is still a candidate until the live qualification
-matrix passes.
+references. LayerSentry sidecars are constrained to the reviewed Kubernetes
+1.36-compatible tag lines; the digest still must be supplied by release
+engineering. Generated output is a candidate until live qualification passes.
 """
 from __future__ import annotations
 
@@ -21,14 +22,16 @@ LEGACY = "csi.opennebula.io"
 LAYERSENTRY = "csi.layersentry.io"
 TARGET_RKE2_VERSION = "v1.36.4+rke2r1"
 TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
+TARGET_DRIVER_IMAGE = "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1"
+TARGET_SIDECAR_IMAGES = {
+    "provisioner": "registry.k8s.io/sig-storage/csi-provisioner:v6.3.0",
+    "attacher": "registry.k8s.io/sig-storage/csi-attacher:v4.13.0",
+    "resizer": "registry.k8s.io/sig-storage/csi-resizer:v2.2.1",
+    "nodeDriverRegistrar": "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0",
+    "livenessProbe": "registry.k8s.io/sig-storage/livenessprobe:v2.20.0",
+}
+REQUIRED_SIDE_CARS = tuple(TARGET_SIDECAR_IMAGES)
 DIGEST_REF = re.compile(r"^\S+:[^/@\s]+@sha256:[0-9a-f]{64}$")
-REQUIRED_SIDE_CARS = (
-    "provisioner",
-    "attacher",
-    "resizer",
-    "nodeDriverRegistrar",
-    "livenessProbe",
-)
 IDENTITY_CONTRACT = {
     "csi-driver.yaml": ("opennebula-csi.driverName",),
     "csi-storageclass.yaml": ("opennebula-csi.driverName",),
@@ -77,6 +80,13 @@ def validate_digest_ref(value: Any, field: str) -> str:
     return text
 
 
+def validate_exact_image(value: Any, field: str, expected_tag: str) -> str:
+    text = validate_digest_ref(value, field)
+    if not text.startswith(expected_tag + "@sha256:"):
+        raise ValueError(f"{field} must use reviewed image tag {expected_tag} with an immutable digest")
+    return text
+
+
 def load_release_lock(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text())
@@ -92,9 +102,9 @@ def load_release_lock(path: Path) -> dict[str, Any]:
         raise ValueError("rke2.kubeletRootDir must be an absolute non-root path")
 
     images = data.get("images") or {}
-    validate_digest_ref(images.get("driver"), "images.driver")
-    for name in REQUIRED_SIDE_CARS:
-        validate_digest_ref(images.get(name), f"images.{name}")
+    validate_exact_image(images.get("driver"), "images.driver", TARGET_DRIVER_IMAGE)
+    for name, expected_tag in TARGET_SIDECAR_IMAGES.items():
+        validate_exact_image(images.get(name), f"images.{name}", expected_tag)
 
     capabilities = data.get("capabilities") or {}
     if capabilities.get("expansion") is not False:
@@ -109,7 +119,7 @@ def load_release_lock(path: Path) -> dict[str, Any]:
 
 
 def split_driver_ref(image_ref: str) -> tuple[str, str]:
-    validate_digest_ref(image_ref, "images.driver")
+    validate_exact_image(image_ref, "images.driver", TARGET_DRIVER_IMAGE)
     tagged, digest = image_ref.split("@sha256:", 1)
     repository, tag = tagged.rsplit(":", 1)
     if not repository or not tag:
@@ -177,8 +187,8 @@ def main() -> int:
             "apiVersion": "v2",
             "name": "layersentry-csi",
             "type": "application",
-            "version": "0.1.0-dev",
-            "appVersion": "0.1.0-dev",
+            "version": "0.5.15-layersentry.1",
+            "appVersion": "v0.5.15-layersentry.1",
             "description": "LayerSentry-qualified candidate using the OpenNebula CSI engine",
             "sources": [
                 "https://github.com/adaptgurus/storage-provider-opennebula",
