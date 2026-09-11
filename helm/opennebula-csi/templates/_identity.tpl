@@ -62,6 +62,11 @@ upstream-compatible chart behavior remains unchanged.
     {{- fail "LayerSentry CSI requires credentials.existingSecret.key" -}}
   {{- end -}}
 
+  {{- $resizer := (get .Values "resizer") | default dict -}}
+  {{- if and (hasKey $resizer "enabled") (get $resizer "enabled") -}}
+    {{- fail "LayerSentry CSI expansion is not qualified; resizer.enabled must remain false" -}}
+  {{- end -}}
+
   {{- $snapshotter := (get .Values "snapshotter") | default dict -}}
   {{- if ((get $snapshotter "enabled") | default false) -}}
     {{- fail "LayerSentry CSI snapshots are not qualified; snapshotter.enabled must remain false" -}}
