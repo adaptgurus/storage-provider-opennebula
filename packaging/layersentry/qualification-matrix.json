@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "LayerSentry CSI",
   "target": {
-    "kubernetes": "1.36",
-    "rke2": "v1.36.3+rke2r1",
-    "rke2_commit": "c4f306e6c5fa18dfb447bf6b8a0423f2da68c939",
+    "kubernetes": "1.36.4",
+    "rke2": "v1.36.4+rke2r1",
+    "rke2_commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
     "driver_identity": "csi.layersentry.io"
   },
   "selected_storage_profile": null,
