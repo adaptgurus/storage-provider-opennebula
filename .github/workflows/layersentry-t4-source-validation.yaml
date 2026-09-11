@@ -57,51 +57,48 @@ jobs:
             record_controlled_evidence.py \
             live_qualification.py
 
-      - name: Current qualification matrix must not pass production promotion
+      - name: Current incomplete qualification must remain blocked
         run: |
           set +e
           python3 packaging/layersentry/validate_qualification.py \
             --matrix packaging/layersentry/qualification-matrix.json \
             --release-lock packaging/layersentry/release-lock.template.json \
-            --evidence-root . \
-            > "${RUNNER_TEMP}/qualification-gate.out" 2>&1
+            --evidence-root . > "${RUNNER_TEMP}/qualification-gate.out" 2>&1
           rc=$?
           set -e
           test "$rc" -ne 0
-          grep -q 'NOT_QUALIFIED' "${RUNNER_TEMP}/qualification-gate.out"
-          grep -q 'selected_storage_profile' "${RUNNER_TEMP}/qualification-gate.out"
+          grep -Fq 'NOT_QUALIFIED' "${RUNNER_TEMP}/qualification-gate.out"
+          grep -Fq 'selected_storage_profile' "${RUNNER_TEMP}/qualification-gate.out"
 
           set +e
           python3 packaging/layersentry/validate_storage_profile.py \
             --matrix packaging/layersentry/qualification-matrix.json \
             --release-lock packaging/layersentry/release-lock.template.json \
-            --evidence-root . \
-            > "${RUNNER_TEMP}/storage-profile-gate.out" 2>&1
+            --evidence-root . > "${RUNNER_TEMP}/storage-profile-gate.out" 2>&1
           rc=$?
           set -e
           test "$rc" -ne 0
-          grep -q 'STORAGE_PROFILE_NOT_QUALIFIED' "${RUNNER_TEMP}/storage-profile-gate.out"
+          grep -Fq 'STORAGE_PROFILE_NOT_QUALIFIED' "${RUNNER_TEMP}/storage-profile-gate.out"
 
           set +e
           python3 packaging/layersentry/validate_live_evidence.py \
             --matrix packaging/layersentry/qualification-matrix.json \
             --release-lock packaging/layersentry/release-lock.template.json \
-            --evidence-root . \
-            > "${RUNNER_TEMP}/live-evidence-gate.out" 2>&1
+            --evidence-root . > "${RUNNER_TEMP}/live-evidence-gate.out" 2>&1
           rc=$?
           set -e
           test "$rc" -ne 0
-          grep -q 'LIVE_EVIDENCE_NOT_QUALIFIED' "${RUNNER_TEMP}/live-evidence-gate.out"
+          grep -Fq 'LIVE_EVIDENCE_NOT_QUALIFIED' "${RUNNER_TEMP}/live-evidence-gate.out"
 
       - name: Render legacy chart default
         run: |
           helm lint helm/opennebula-csi --set-string credentials.inlineAuth=ci:placeholder
           helm template legacy helm/opennebula-csi \
             --set-string credentials.inlineAuth=ci:placeholder > "${RUNNER_TEMP}/legacy.yaml"
-          grep -q 'name: csi.opennebula.io' "${RUNNER_TEMP}/legacy.yaml"
-          grep -q '/plugins/csi.opennebula.io/csi.sock' "${RUNNER_TEMP}/legacy.yaml"
-          grep -q 'name: csi-resizer' "${RUNNER_TEMP}/legacy.yaml"
-          ! grep -q 'readinessProbe:' "${RUNNER_TEMP}/legacy.yaml"
+          grep -Fq 'name: csi.opennebula.io' "${RUNNER_TEMP}/legacy.yaml"
+          grep -Fq '/plugins/csi.opennebula.io/csi.sock' "${RUNNER_TEMP}/legacy.yaml"
+          grep -Fq 'name: csi-resizer' "${RUNNER_TEMP}/legacy.yaml"
+          ! grep -Fq 'readinessProbe:' "${RUNNER_TEMP}/legacy.yaml"
 
       - name: Build digest-locked LayerSentry candidate and render identity
         run: |
@@ -134,12 +131,14 @@ jobs:
           (root / "release-lock.json").write_text(json.dumps(lock))
           (root / "site-values.yaml").write_text("""storageClasses:\n  - name: layersentry-test\n    allowVolumeExpansion: false\n""")
           PY
+
           python3 packaging/layersentry/build_chart.py \
             --release-lock "${RUNNER_TEMP}/release-lock.json" \
             --output "${RUNNER_TEMP}/layersentry-csi"
           python3 packaging/layersentry/emit_offline_manifest.py \
             --release-lock "${RUNNER_TEMP}/release-lock.json" \
             --output "${RUNNER_TEMP}/offline-images.txt"
+
           helm lint "${RUNNER_TEMP}/layersentry-csi" \
             -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
             -f "${RUNNER_TEMP}/site-values.yaml" \
@@ -148,56 +147,73 @@ jobs:
             -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
             -f "${RUNNER_TEMP}/site-values.yaml" \
             --set credentials.existingSecret.name=layersentry-ci-auth > "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'name: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'provisioner: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q -- '--drivername=csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q '/plugins/csi.layersentry.io/csi.sock' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'csi-provisioner:v6.3.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'csi-attacher:v4.13.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'csi-node-driver-registrar:v2.18.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
-          grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+
+          grep -Fq 'name: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq 'provisioner: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq -- '--drivername=csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq '/plugins/csi.layersentry.io/csi.sock' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq 'csi-provisioner:v6.3.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq 'csi-attacher:v4.13.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq 'csi-node-driver-registrar:v2.18.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           test "$(grep -c 'livenessProbe:' "${RUNNER_TEMP}/layersentry.yaml")" -ge 2
           test "$(grep -c 'readinessProbe:' "${RUNNER_TEMP}/layersentry.yaml")" -ge 2
-          grep -q 'path: /healthz' "${RUNNER_TEMP}/layersentry.yaml"
-          ! grep -q 'name: csi-resizer' "${RUNNER_TEMP}/layersentry.yaml"
-          ! grep -q 'csi-resizer:' "${RUNNER_TEMP}/layersentry.yaml"
-          ! grep -q 'csi-resizer' "${RUNNER_TEMP}/offline-images.txt"
-          ! grep -q 'csi-snapshotter' "${RUNNER_TEMP}/offline-images.txt"
-          ! grep -q 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -Fq 'path: /healthz' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -Fq 'name: csi-resizer' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -Fq 'csi-resizer:' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -Fq 'csi-resizer' "${RUNNER_TEMP}/offline-images.txt"
+          ! grep -Fq 'csi-snapshotter' "${RUNNER_TEMP}/offline-images.txt"
+          ! grep -Fq 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
 
       - name: Reject unsafe LayerSentry site overrides
+        shell: bash
         run: |
+          set -euo pipefail
           chart="${RUNNER_TEMP}/layersentry-csi"
           profile="${RUNNER_TEMP}/layersentry-csi/layersentry-values.json"
 
           expect_reject() {
-            pattern="$1"
-            shift
+            local label="$1"
+            local pattern="$2"
+            shift 2
+            local output="${RUNNER_TEMP}/reject-${label}.out"
+            echo "::group::reject ${label}"
             set +e
-            helm template invalid "$chart" -f "$profile" "$@" > "${RUNNER_TEMP}/invalid.out" 2>&1
-            rc=$?
+            helm template invalid "$chart" -f "$profile" "$@" > "$output" 2>&1
+            local rc=$?
             set -e
-            test "$rc" -ne 0
-            grep -q "$pattern" "${RUNNER_TEMP}/invalid.out"
+            cat "$output"
+            if [[ "$rc" -eq 0 ]]; then
+              echo "ERROR: unsafe override '${label}' rendered successfully; expected rejection" >&2
+              echo "::endgroup::"
+              return 1
+            fi
+            if ! grep -Fq -- "$pattern" "$output"; then
+              echo "ERROR: override '${label}' failed, but not for the expected policy: ${pattern}" >&2
+              echo "::endgroup::"
+              return 1
+            fi
+            echo "PASS: ${label} rejected by expected policy"
+            echo "::endgroup::"
           }
 
-          expect_reject 'forbids credentials.inlineAuth' \
+          expect_reject inline-auth 'forbids credentials.inlineAuth' \
             --set-string credentials.inlineAuth=ci:forbidden
 
-          expect_reject 'multi-controller topology is not qualified' \
+          expect_reject multi-controller 'multi-controller topology is not qualified' \
             --set credentials.existingSecret.name=layersentry-ci-auth \
             --set controller.replicaCount=2
 
-          expect_reject 'resizer.enabled must remain false' \
+          expect_reject resizer 'resizer.enabled must remain false' \
             --set credentials.existingSecret.name=layersentry-ci-auth \
             --set resizer.enabled=true
 
-          expect_reject 'allowVolumeExpansion must remain false' \
+          expect_reject expansion 'allowVolumeExpansion must remain false' \
             --set credentials.existingSecret.name=layersentry-ci-auth \
             --set 'storageClasses[0].name=unsafe-expand' \
             --set 'storageClasses[0].allowVolumeExpansion=true'
 
-          expect_reject 'snapshotter.enabled must remain false' \
+          expect_reject snapshotter 'snapshotter.enabled must remain false' \
             --set credentials.existingSecret.name=layersentry-ci-auth \
             --set snapshotter.enabled=true
 
@@ -213,4 +229,4 @@ jobs:
           rc=$?
           set -e
           test "$rc" -ne 0
-          grep -q 'driver.extraArgs must not set --drivername' /tmp/invalid.out
+          grep -Fq 'driver.extraArgs must not set --drivername' /tmp/invalid.out
