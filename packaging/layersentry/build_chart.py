@@ -33,7 +33,10 @@ TARGET_SIDECAR_IMAGES = {
 REQUIRED_SIDE_CARS = tuple(TARGET_SIDECAR_IMAGES)
 DIGEST_REF = re.compile(r"^\S+:[^/@\s]+@sha256:[0-9a-f]{64}$")
 IDENTITY_CONTRACT = {
-    "csi-driver.yaml": ("opennebula-csi.driverName",),
+    "csi-driver.yaml": (
+        "opennebula-csi.driverName",
+        "opennebula-csi.validateLayerSentryProfile",
+    ),
     "csi-storageclass.yaml": ("opennebula-csi.driverName",),
     "csi-snapshotclass.yaml": ("opennebula-csi.driverName",),
     "csi-controller-server.yaml": (
@@ -54,10 +57,12 @@ def git(root: Path, *args: str) -> str:
 
 
 def validate_identity_source(templates: dict[str, str]) -> None:
-    """Reject source that reintroduces split CSI identity ownership."""
+    """Reject source that reintroduces split CSI identity or removes release admission."""
     helper = templates.get("_identity.tpl", "")
     if "define \"opennebula-csi.driverName\"" not in helper:
         raise ValueError("identity helper is missing from _identity.tpl")
+    if "define \"opennebula-csi.validateLayerSentryProfile\"" not in helper:
+        raise ValueError("LayerSentry fail-closed profile validator is missing from _identity.tpl")
     if LEGACY not in helper:
         raise ValueError("legacy default identity must remain explicit for backward compatibility")
     # The helper may document the LayerSentry profile identity. What must never
@@ -206,6 +211,7 @@ def main() -> int:
             f"RKE2 target: {TARGET_RKE2_VERSION} ({TARGET_RKE2_COMMIT})\n"
             "NOT production-qualified until the live qualification matrix passes.\n"
             "Use -f layersentry-values.json plus an approved site values file.\n"
+            "LayerSentry site values must reference a scoped existing Secret; inline provider credentials are rejected.\n"
             "Do not rewrite existing bound PV spec.csi.driver fields. Legacy volumes keep their legacy driver.\n"
         )
         staged.rename(dest)
