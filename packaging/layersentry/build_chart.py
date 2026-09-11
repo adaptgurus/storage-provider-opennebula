@@ -60,7 +60,10 @@ def validate_identity_source(templates: dict[str, str]) -> None:
         raise ValueError("identity helper is missing from _identity.tpl")
     if LEGACY not in helper:
         raise ValueError("legacy default identity must remain explicit for backward compatibility")
-    if LAYERSENTRY in helper:
+    # The helper may document the LayerSentry profile identity. What must never
+    # happen is making that identity the chart default, because that would
+    # silently break legacy csi.opennebula.io installations/PVs.
+    if f'default "{LAYERSENTRY}"' in helper:
         raise ValueError("LayerSentry identity belongs in the release profile, not the chart default")
     for name, required_tokens in IDENTITY_CONTRACT.items():
         text = templates.get(name)
