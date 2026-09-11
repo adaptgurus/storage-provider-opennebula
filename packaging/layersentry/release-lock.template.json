@@ -1,4 +1,9 @@
 {
+  "release": {
+    "version": "0.5.15-layersentry.1",
+    "gitTag": "v0.5.15-layersentry.1",
+    "sourceCommit": "REPLACE_WITH_40_LOWERCASE_HEX"
+  },
   "rke2": {
     "version": "v1.36.4+rke2r1",
     "commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
