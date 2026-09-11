@@ -97,6 +97,8 @@ def load_release_lock(path: Path) -> dict[str, Any]:
         validate_digest_ref(images.get(name), f"images.{name}")
 
     capabilities = data.get("capabilities") or {}
+    if capabilities.get("expansion") is not False:
+        raise ValueError("expansion must remain false until backend-specific expansion qualification passes")
     if capabilities.get("snapshots") is not False:
         raise ValueError("snapshots must remain false until snapshot qualification passes")
     if capabilities.get("clones") is not False:
