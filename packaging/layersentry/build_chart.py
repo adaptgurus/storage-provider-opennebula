@@ -20,8 +20,8 @@ from typing import Any
 
 LEGACY = "csi.opennebula.io"
 LAYERSENTRY = "csi.layersentry.io"
-TARGET_RKE2_VERSION = "v1.36.4+rke2r1"
-TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
+TARGET_RKE2_VERSION = "v1.36.3+rke2r1"
+TARGET_RKE2_COMMIT = "c4f306e6c5fa18dfb447bf6b8a0423f2da68c939"
 TARGET_DRIVER_IMAGE = "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1"
 TARGET_SIDECAR_IMAGES = {
     "provisioner": "registry.k8s.io/sig-storage/csi-provisioner:v6.3.0",
