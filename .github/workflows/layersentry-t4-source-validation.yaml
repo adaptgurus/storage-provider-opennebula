@@ -51,8 +51,16 @@ jobs:
           python3 -m unittest -v \
             test_build_chart.py \
             test_validate_qualification.py \
-            test_verify_oci_attestations.py
+            test_validate_storage_profile.py \
+            test_verify_oci_attestations.py \
+            test_live_qualification.py
           bash -n build_release.sh
+          python3 -m py_compile \
+            build_chart.py \
+            validate_qualification.py \
+            validate_storage_profile.py \
+            verify_oci_attestations.py \
+            live_qualification.py
 
       - name: Current qualification matrix must not pass production promotion
         run: |
@@ -67,6 +75,17 @@ jobs:
           test "$rc" -ne 0
           grep -q 'NOT_QUALIFIED' "${RUNNER_TEMP}/qualification-gate.out"
           grep -q 'selected_storage_profile' "${RUNNER_TEMP}/qualification-gate.out"
+
+          set +e
+          python3 packaging/layersentry/validate_storage_profile.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.template.json \
+            --evidence-root . \
+            > "${RUNNER_TEMP}/storage-profile-gate.out" 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'STORAGE_PROFILE_NOT_QUALIFIED' "${RUNNER_TEMP}/storage-profile-gate.out"
 
       - name: Render legacy chart default
         run: |
