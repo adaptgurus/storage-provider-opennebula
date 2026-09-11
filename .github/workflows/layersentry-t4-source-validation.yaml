@@ -45,9 +45,22 @@ jobs:
           go test -tags layersentry ./pkg/csi/driver \
             -run '^(TestLayerSentry|TestAttachmentReconciler)'
 
-      - name: Packaging unit tests
+      - name: Packaging and promotion-gate unit tests
         working-directory: packaging/layersentry
-        run: python3 -m unittest -v test_build_chart.py
+        run: python3 -m unittest -v test_build_chart.py test_validate_qualification.py
+
+      - name: Current qualification matrix must not pass production promotion
+        run: |
+          set +e
+          python3 packaging/layersentry/validate_qualification.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.template.json \
+            > "${RUNNER_TEMP}/qualification-gate.out" 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'NOT_QUALIFIED' "${RUNNER_TEMP}/qualification-gate.out"
+          grep -q 'selected_storage_profile' "${RUNNER_TEMP}/qualification-gate.out"
 
       - name: Render legacy chart default
         run: |
@@ -89,11 +102,11 @@ jobs:
           helm lint "${RUNNER_TEMP}/layersentry-csi" \
             -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
             -f "${RUNNER_TEMP}/site-values.yaml" \
-            --set-string credentials.inlineAuth=ci:placeholder
+            --set credentials.existingSecret.name=layersentry-ci-auth
           helm template layersentry "${RUNNER_TEMP}/layersentry-csi" \
             -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
             -f "${RUNNER_TEMP}/site-values.yaml" \
-            --set-string credentials.inlineAuth=ci:placeholder > "${RUNNER_TEMP}/layersentry.yaml"
+            --set credentials.existingSecret.name=layersentry-ci-auth > "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'name: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q 'provisioner: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q -- '--drivername=csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
@@ -105,12 +118,40 @@ jobs:
           grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
 
+      - name: Reject unsafe LayerSentry site overrides
+        run: |
+          chart="${RUNNER_TEMP}/layersentry-csi"
+          profile="${RUNNER_TEMP}/layersentry-csi/layersentry-values.json"
+
+          expect_reject() {
+            pattern="$1"
+            shift
+            set +e
+            helm template invalid "$chart" -f "$profile" "$@" > "${RUNNER_TEMP}/invalid.out" 2>&1
+            rc=$?
+            set -e
+            test "$rc" -ne 0
+            grep -q "$pattern" "${RUNNER_TEMP}/invalid.out"
+          }
+
+          expect_reject 'forbids credentials.inlineAuth' \
+            --set-string credentials.inlineAuth=ci:forbidden
+
+          expect_reject 'allowVolumeExpansion must remain false' \
+            --set credentials.existingSecret.name=layersentry-ci-auth \
+            --set 'storageClasses[0].name=unsafe-expand' \
+            --set 'storageClasses[0].allowVolumeExpansion=true'
+
+          expect_reject 'snapshotter.enabled must remain false' \
+            --set credentials.existingSecret.name=layersentry-ci-auth \
+            --set snapshotter.enabled=true
+
       - name: Reject duplicate drivername source
         run: |
           set +e
           helm template invalid helm/opennebula-csi \
-            --set-string credentials.inlineAuth=ci:placeholder \
             --set driver.name=csi.layersentry.io \
+            --set credentials.existingSecret.name=layersentry-ci-auth \
             --set 'driver.extraArgs[0]=--drivername=csi.other.example' > /tmp/invalid.out 2>&1
           rc=$?
           set -e
