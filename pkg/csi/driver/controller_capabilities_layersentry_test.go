@@ -41,3 +41,16 @@ func TestLayerSentryControllerCapabilitiesExcludeUnqualifiedOptionalRPCs(t *test
 		require.Falsef(t, got[unqualified], "unqualified capability %s must not be advertised", unqualified.String())
 	}
 }
+
+func TestLayerSentryPluginCapabilitiesExcludeUnqualifiedExpansion(t *testing.T) {
+	driver := &Driver{name: "csi.layersentry.io", version: "test"}
+	server := NewIdentityServer(driver)
+	resp, err := server.GetPluginCapabilities(context.Background(), &csi.GetPluginCapabilitiesRequest{})
+	require.NoError(t, err)
+
+	for _, capability := range resp.GetCapabilities() {
+		if expansion := capability.GetVolumeExpansion(); expansion != nil {
+			t.Fatalf("LayerSentry must not advertise volume expansion before backend qualification: %s", expansion.GetType().String())
+		}
+	}
+}
