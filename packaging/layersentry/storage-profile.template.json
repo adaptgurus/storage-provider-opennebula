@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "id": "REPLACE_WITH_PROFILE_ID",
+  "status": "NOT_QUALIFIED",
+  "scope": {
+    "opennebula": {
+      "datastore_id": null,
+      "datastore_name": "REPLACE",
+      "datastore_type": "REPLACE",
+      "ds_mad": "REPLACE",
+      "tm_mad": "REPLACE"
+    },
+    "backend": {
+      "category": "REPLACE",
+      "vendor": "REPLACE_OR_EXPLICIT_NOT_APPLICABLE",
+      "model": "REPLACE_OR_EXPLICIT_NOT_APPLICABLE",
+      "firmware": "REPLACE_OR_EXPLICIT_NOT_APPLICABLE"
+    },
+    "transport": {
+      "protocol": "REPLACE",
+      "multipath": false
+    },
+    "kubernetes": {
+      "rke2": "v1.36.4+rke2r1",
+      "kubernetes": "v1.36.4",
+      "node_os": "REPLACE",
+      "node_kernel": "REPLACE"
+    },
+    "storage_class": {
+      "name": "REPLACE",
+      "access_modes": ["ReadWriteOnce"],
+      "volume_mode": "Filesystem",
+      "parameters": {}
+    }
+  },
+  "qualified_capabilities": {
+    "dynamic_provisioning": false,
+    "attach_detach": false,
+    "worker_replacement_data_survival": false,
+    "expansion": false,
+    "snapshots": false,
+    "clones": false
+  },
+  "limitations": [],
+  "evidence": []
+}
