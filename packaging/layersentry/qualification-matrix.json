@@ -13,8 +13,9 @@
   "selected_storage_profile": null,
   "selected_storage_profile_file": null,
   "overall_status": "NOT_QUALIFIED",
-  "qualification_rule": "Do not set QUALIFIED until one exact named backend profile passes data survival and recovery, including worker replacement with identical data. Qualification does not extend to other vendors, models, firmware, transports, datastore types, StorageClass parameters, node OS/kernel combinations, or topologies.",
+  "qualification_rule": "Do not set QUALIFIED until one exact named backend profile passes data survival and recovery, including worker replacement with identical data. Baseline and final deployed CSI image identity must match the same frozen release lock and qualification run. Qualification does not extend to other vendors, models, firmware, transports, datastore types, StorageClass parameters, node OS/kernel combinations, or topologies.",
   "tests": [
+    {"id": "release_identity_baseline", "status": "NOT_RUN", "evidence": []},
     {"id": "install", "status": "NOT_RUN", "evidence": []},
     {"id": "discovery", "status": "NOT_RUN", "evidence": []},
     {"id": "storageclass", "status": "SOURCE_RENDER_GATE_ADDED", "evidence": []},
@@ -38,7 +39,8 @@
     {"id": "duplicate_operations", "status": "NOT_RUN", "evidence": []},
     {"id": "unknown_reconciliation", "status": "SOURCE_IDENTITY_ISOLATION_TEST_ADDED", "evidence": [], "note": "Live ambiguous-outcome/reconciliation tests are still required."},
     {"id": "tenant_isolation", "status": "NOT_RUN", "evidence": []},
-    {"id": "foreign_csi_isolation", "status": "SOURCE_NEGATIVE_TEST_ADDED", "evidence": [], "note": "Live foreign-driver coexistence evidence is still required."}
+    {"id": "foreign_csi_isolation", "status": "SOURCE_NEGATIVE_TEST_ADDED", "evidence": [], "note": "Live foreign-driver coexistence evidence is still required."},
+    {"id": "release_identity_final", "status": "NOT_RUN", "evidence": []}
   ],
   "release_artifacts": {
     "driver_image_digest": null,
