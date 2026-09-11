@@ -54,7 +54,7 @@ class PackagingTests(unittest.TestCase):
                 "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0@sha256:{digest}",
                 "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.16.0@sha256:{digest}",
             },
-            "capabilities": {"snapshots": False, "clones": False},
+            "capabilities": {"expansion": False, "snapshots": False, "clones": False},
         }
 
     def test_identity_source_is_consistent(self):
@@ -106,6 +106,15 @@ class PackagingTests(unittest.TestCase):
     def test_release_lock_rejects_wrong_rke2_version(self):
         data = self.release_lock()
         data["rke2"]["version"] = "v1.35.0+rke2r1"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
+
+    def test_release_lock_rejects_unqualified_expansion_advertising(self):
+        data = self.release_lock()
+        data["capabilities"]["expansion"] = True
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lock.json"
             path.write_text(json.dumps(data))
