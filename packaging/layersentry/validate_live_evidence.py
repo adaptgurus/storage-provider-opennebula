@@ -10,6 +10,7 @@ from typing import Any
 
 from build_chart import LAYERSENTRY, load_release_lock
 
+TARGET_KUBERNETES = "v1.36.4"
 REQUIRED_TESTS = (
     "release_identity_baseline",
     "install",
@@ -101,8 +102,10 @@ def validate_live_evidence(
             errors.append(f"live evidence matrix record {test_id} must be PASS")
             continue
         refs = matrix_record.get("evidence")
-        if not isinstance(refs, list) or not refs:
-            errors.append(f"live evidence matrix record {test_id} must reference JSON evidence")
+        if not isinstance(refs, list) or len(refs) != 1:
+            errors.append(
+                f"live evidence matrix record {test_id} must reference exactly one canonical JSON evidence file"
+            )
             continue
         reference = str(refs[0] or "").strip()
         if not reference:
@@ -115,6 +118,8 @@ def validate_live_evidence(
             errors.append(str(exc))
             continue
 
+        if path.suffix.lower() != ".json":
+            errors.append(f"evidence {reference} must be a JSON file")
         if evidence.get("test_id") != test_id:
             errors.append(f"evidence {reference} test_id must be {test_id}")
         if evidence.get("status") != "PASS":
@@ -128,10 +133,14 @@ def validate_live_evidence(
         target = evidence.get("target") or {}
         if target.get("rke2") != rke2.get("version"):
             errors.append(f"evidence {reference} RKE2 target does not match release lock")
+        if target.get("kubernetes") != TARGET_KUBERNETES:
+            errors.append(f"evidence {reference} Kubernetes target must be {TARGET_KUBERNETES}")
         if target.get("driver") != LAYERSENTRY:
             errors.append(f"evidence {reference} driver must be {LAYERSENTRY}")
         storage_class = str(target.get("storage_class") or "").strip()
-        if storage_class:
+        if not storage_class:
+            errors.append(f"evidence {reference} is missing storage_class")
+        else:
             storage_classes.add(storage_class)
 
         if test_id in IDENTITY_TESTS:
