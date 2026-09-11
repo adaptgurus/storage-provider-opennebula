@@ -8,17 +8,20 @@ release artifacts have been recorded. Standard library only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any, Iterable
 
 DRIVER_IDENTITY = "csi.layersentry.io"
+TARGET_RELEASE_VERSION = "0.5.15-layersentry.1"
+TARGET_RELEASE_TAG = f"v{TARGET_RELEASE_VERSION}"
 TARGET_KUBERNETES = "1.36.4"
 TARGET_RKE2 = "v1.36.4+rke2r1"
 TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
 EXPECTED_IMAGE_TAGS = {
-    "driver": "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1",
+    "driver": f"ghcr.io/adaptgurus/layersentry-csi:{TARGET_RELEASE_TAG}",
     "provisioner": "registry.k8s.io/sig-storage/csi-provisioner:v6.3.0",
     "attacher": "registry.k8s.io/sig-storage/csi-attacher:v4.13.0",
     "nodeDriverRegistrar": "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0",
@@ -56,6 +59,8 @@ OPTIONAL_CAPABILITY_TESTS = {
 
 NOT_OFFERED_PREFIXES = ("NOT_OFFERED", "NOT_ADVERTISED")
 DIGEST_IMAGE = re.compile(r"^\S+:[^/@\s]+@sha256:[0-9a-f]{64}$")
+FULL_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+SHA256_LINE = re.compile(r"^([0-9a-f]{64})\s+[* ]?(.+)$")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -105,6 +110,21 @@ def expected_release_images(release_lock: dict[str, Any]) -> list[str]:
     return [str(images.get(name) or "").strip() for name in EXPECTED_IMAGE_TAGS]
 
 
+def validate_release_identity(release_lock: dict[str, Any], errors: list[str]) -> str:
+    release = release_lock.get("release")
+    if not isinstance(release, dict):
+        errors.append("release lock release must be an object")
+        return ""
+    if release.get("version") != TARGET_RELEASE_VERSION:
+        errors.append(f"release.version must be {TARGET_RELEASE_VERSION}")
+    if release.get("gitTag") != TARGET_RELEASE_TAG:
+        errors.append(f"release.gitTag must be {TARGET_RELEASE_TAG}")
+    source_commit = str(release.get("sourceCommit") or "").strip()
+    if not FULL_GIT_SHA.fullmatch(source_commit):
+        errors.append("release.sourceCommit must be a full 40-character lowercase Git SHA")
+    return source_commit
+
+
 def validate_images(release_lock: dict[str, Any], errors: list[str]) -> None:
     images = release_lock.get("images")
     if not isinstance(images, dict):
@@ -117,9 +137,7 @@ def validate_images(release_lock: dict[str, Any], errors: list[str]) -> None:
     if missing:
         errors.append(f"release lock is missing required images: {missing}")
     if unexpected:
-        errors.append(
-            f"release lock contains images for disabled/unreviewed components: {unexpected}"
-        )
+        errors.append(f"release lock contains images for disabled/unreviewed components: {unexpected}")
     for name, expected_tag in EXPECTED_IMAGE_TAGS.items():
         value = str(images.get(name) or "").strip()
         if not DIGEST_IMAGE.fullmatch(value):
@@ -132,8 +150,15 @@ def validate_images(release_lock: dict[str, Any], errors: list[str]) -> None:
 def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any]) -> list[str]:
     errors: list[str] = []
 
+    source_commit = validate_release_identity(release_lock, errors)
     target = matrix.get("target") or {}
     rke2 = release_lock.get("rke2") or {}
+    if target.get("release_version") != TARGET_RELEASE_VERSION:
+        errors.append(f"qualification target release_version must be {TARGET_RELEASE_VERSION}")
+    if target.get("release_tag") != TARGET_RELEASE_TAG:
+        errors.append(f"qualification target release_tag must be {TARGET_RELEASE_TAG}")
+    if str(target.get("source_commit") or "").strip() != source_commit:
+        errors.append("qualification target source_commit must equal release.sourceCommit")
     if target.get("kubernetes") != TARGET_KUBERNETES:
         errors.append(f"qualification target kubernetes must be {TARGET_KUBERNETES}")
     if target.get("driver_identity") != DRIVER_IDENTITY:
@@ -202,7 +227,13 @@ def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any])
     artifacts = matrix.get("release_artifacts") or {}
     if artifacts.get("driver_image_digest") != driver_image:
         errors.append("release_artifacts.driver_image_digest must equal the release lock driver image")
-    for field in ("sbom", "provenance", "offline_image_manifest"):
+    for field in (
+        "sbom",
+        "provenance",
+        "source_provenance",
+        "artifact_checksums",
+        "offline_image_manifest",
+    ):
         if not str(artifacts.get(field) or "").strip():
             errors.append(f"release_artifacts.{field} must reference generated immutable evidence")
     return errors
@@ -218,7 +249,13 @@ def referenced_evidence_paths(matrix: dict[str, Any], release_lock: dict[str, An
         if isinstance(record, dict) and record.get("status") == "PASS":
             yield from evidence_values(record)
     artifacts = matrix.get("release_artifacts") or {}
-    for field in ("sbom", "provenance", "offline_image_manifest"):
+    for field in (
+        "sbom",
+        "provenance",
+        "source_provenance",
+        "artifact_checksums",
+        "offline_image_manifest",
+    ):
         text = str(artifacts.get(field) or "").strip()
         if text:
             yield text
@@ -232,6 +269,66 @@ def resolve_evidence_path(root: Path, reference: str) -> Path | None:
     if resolved != root and root not in resolved.parents:
         return None
     return resolved
+
+
+def validate_checksum_manifest(path: Path, errors: list[str]) -> None:
+    base = path.parent.resolve()
+    seen: set[str] = set()
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        if not raw.strip():
+            continue
+        match = SHA256_LINE.fullmatch(raw)
+        if not match:
+            errors.append(f"artifact checksum manifest has malformed line {lineno}")
+            continue
+        expected, name = match.groups()
+        name = name.strip()
+        if name in seen:
+            errors.append(f"artifact checksum manifest duplicates {name}")
+            continue
+        seen.add(name)
+        candidate = Path(name)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            errors.append(f"artifact checksum path must stay within its evidence directory: {name}")
+            continue
+        resolved = (base / candidate).resolve()
+        if resolved != base and base not in resolved.parents:
+            errors.append(f"artifact checksum path escapes its evidence directory: {name}")
+            continue
+        if not resolved.is_file():
+            errors.append(f"artifact checksum target does not exist: {name}")
+            continue
+        actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        if actual != expected:
+            errors.append(f"artifact checksum mismatch for {name}")
+    if not seen:
+        errors.append("artifact checksum manifest must contain at least one checked artifact")
+
+
+def validate_source_provenance(
+    path: Path, matrix: dict[str, Any], release_lock: dict[str, Any], errors: list[str]
+) -> None:
+    try:
+        provenance = load_json(path)
+    except ValueError as exc:
+        errors.append(str(exc))
+        return
+    release = release_lock.get("release") or {}
+    images = release_lock.get("images") or {}
+    expected = {
+        "source_repository": "adaptgurus/storage-provider-opennebula",
+        "source_commit": release.get("sourceCommit"),
+        "version": release.get("version"),
+        "release_tag": release.get("gitTag"),
+        "immutable_image_ref": images.get("driver"),
+    }
+    for field, value in expected.items():
+        if provenance.get(field) != value:
+            errors.append(f"source provenance {field} must equal the frozen release value")
+    if provenance.get("production_qualified") is not False:
+        errors.append("source provenance must record production_qualified=false before live qualification")
+    if str((matrix.get("target") or {}).get("source_commit") or "").strip() != provenance.get("source_commit"):
+        errors.append("source provenance commit must equal qualification target source_commit")
 
 
 def validate_materialized_evidence(
@@ -257,7 +354,8 @@ def validate_materialized_evidence(
         except OSError as exc:
             errors.append(f"cannot stat evidence file {reference}: {exc}")
 
-    offline_ref = str((matrix.get("release_artifacts") or {}).get("offline_image_manifest") or "").strip()
+    artifacts = matrix.get("release_artifacts") or {}
+    offline_ref = str(artifacts.get("offline_image_manifest") or "").strip()
     if offline_ref:
         offline_path = resolve_evidence_path(root, offline_ref)
         if offline_path is not None and offline_path.is_file():
@@ -269,6 +367,18 @@ def validate_materialized_evidence(
                 errors.append(
                     "offline image manifest must exactly match the ordered enabled image set in release-lock.json"
                 )
+
+    source_ref = str(artifacts.get("source_provenance") or "").strip()
+    if source_ref:
+        source_path = resolve_evidence_path(root, source_ref)
+        if source_path is not None and source_path.is_file():
+            validate_source_provenance(source_path, matrix, release_lock, errors)
+
+    checksums_ref = str(artifacts.get("artifact_checksums") or "").strip()
+    if checksums_ref:
+        checksums_path = resolve_evidence_path(root, checksums_ref)
+        if checksums_path is not None and checksums_path.is_file():
+            validate_checksum_manifest(checksums_path, errors)
     return errors
 
 
