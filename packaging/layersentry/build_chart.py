@@ -32,10 +32,14 @@ REQUIRED_SIDE_CARS = (
 IDENTITY_CONTRACT = {
     "csi-driver.yaml": ("opennebula-csi.driverName",),
     "csi-storageclass.yaml": ("opennebula-csi.driverName",),
-    "csi-controller-server.yaml": ("--drivername={{ include", "opennebula-csi.driverName"),
+    "csi-snapshotclass.yaml": ("opennebula-csi.driverName",),
+    "csi-controller-server.yaml": (
+        '$driverName := include "opennebula-csi.driverName"',
+        "--drivername={{ $driverName }}",
+    ),
     "csi-node-server.yaml": (
-        "--drivername={{ include",
-        "opennebula-csi.driverName",
+        '$driverName := include "opennebula-csi.driverName"',
+        "--drivername={{ $driverName }}",
         "opennebula-csi.kubeletPluginDir",
         "opennebula-csi.kubeletRegistrationDir",
     ),
@@ -129,6 +133,7 @@ def build_profile(lock: dict[str, Any]) -> dict[str, Any]:
         "inventoryController": {"enabled": False},
         "snapshotter": {"enabled": False},
         "featureGates": {"cephfsSnapshots": False, "cephfsClones": False},
+        "snapshotClasses": [],
         "storageClasses": [],
     }
 
