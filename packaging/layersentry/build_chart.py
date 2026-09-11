@@ -23,14 +23,13 @@ LAYERSENTRY = "csi.layersentry.io"
 TARGET_RKE2_VERSION = "v1.36.4+rke2r1"
 TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
 TARGET_DRIVER_IMAGE = "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1"
-TARGET_SIDECAR_IMAGES = {
+TARGET_REQUIRED_SIDECAR_IMAGES = {
     "provisioner": "registry.k8s.io/sig-storage/csi-provisioner:v6.3.0",
     "attacher": "registry.k8s.io/sig-storage/csi-attacher:v4.13.0",
-    "resizer": "registry.k8s.io/sig-storage/csi-resizer:v2.2.1",
     "nodeDriverRegistrar": "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0",
     "livenessProbe": "registry.k8s.io/sig-storage/livenessprobe:v2.20.0",
 }
-REQUIRED_SIDE_CARS = tuple(TARGET_SIDECAR_IMAGES)
+TARGET_RESIZER_IMAGE = "registry.k8s.io/sig-storage/csi-resizer:v2.2.1"
 DIGEST_REF = re.compile(r"^\S+:[^/@\s]+@sha256:[0-9a-f]{64}$")
 IDENTITY_CONTRACT = {
     "csi-driver.yaml": (
@@ -65,9 +64,6 @@ def validate_identity_source(templates: dict[str, str]) -> None:
         raise ValueError("LayerSentry fail-closed profile validator is missing from _identity.tpl")
     if LEGACY not in helper:
         raise ValueError("legacy default identity must remain explicit for backward compatibility")
-    # The helper may document the LayerSentry profile identity. What must never
-    # happen is making that identity the chart default, because that would
-    # silently break legacy csi.opennebula.io installations/PVs.
     if f'default "{LAYERSENTRY}"' in helper:
         raise ValueError("LayerSentry identity belongs in the release profile, not the chart default")
     for name, required_tokens in IDENTITY_CONTRACT.items():
@@ -111,7 +107,7 @@ def load_release_lock(path: Path) -> dict[str, Any]:
 
     images = data.get("images") or {}
     validate_exact_image(images.get("driver"), "images.driver", TARGET_DRIVER_IMAGE)
-    for name, expected_tag in TARGET_SIDECAR_IMAGES.items():
+    for name, expected_tag in TARGET_REQUIRED_SIDECAR_IMAGES.items():
         validate_exact_image(images.get(name), f"images.{name}", expected_tag)
 
     capabilities = data.get("capabilities") or {}
@@ -121,6 +117,8 @@ def load_release_lock(path: Path) -> dict[str, Any]:
         raise ValueError("snapshots must remain false until snapshot qualification passes")
     if capabilities.get("clones") is not False:
         raise ValueError("clones must remain false until clone qualification passes")
+    if images.get("resizer"):
+        raise ValueError("resizer image must be omitted while expansion is not qualified")
     if images.get("snapshotter"):
         raise ValueError("snapshotter image must be omitted while snapshots are not qualified")
     return data
@@ -147,10 +145,11 @@ def build_profile(lock: dict[str, Any]) -> dict[str, Any]:
         "kubelet": {"rootDir": root_dir},
         "sidecars": {
             name: {"image": images[name]}
-            for name in REQUIRED_SIDE_CARS
+            for name in TARGET_REQUIRED_SIDECAR_IMAGES
         },
         "controller": {"leaderElection": {"leaseName": "layersentry-csi-controller"}},
         "inventoryController": {"enabled": False},
+        "resizer": {"enabled": False},
         "snapshotter": {"enabled": False},
         "featureGates": {"cephfsSnapshots": False, "cephfsClones": False},
         "snapshotClasses": [],
@@ -210,6 +209,7 @@ def main() -> int:
             f"CSI identity: {LAYERSENTRY}\n"
             f"RKE2 target: {TARGET_RKE2_VERSION} ({TARGET_RKE2_COMMIT})\n"
             "NOT production-qualified until the live qualification matrix passes.\n"
+            "Expansion/snapshot/clone sidecars and resources remain disabled until qualified.\n"
             "Use -f layersentry-values.json plus an approved site values file.\n"
             "LayerSentry site values must reference a scoped existing Secret; inline provider credentials are rejected.\n"
             "Do not rewrite existing bound PV spec.csi.driver fields. Legacy volumes keep their legacy driver.\n"
