@@ -81,3 +81,67 @@ func TestAttachmentReconcilerDeletesStaleVolumeAttachment(t *testing.T) {
 	assert.Error(t, err)
 	mockProvider.AssertExpectations(t)
 }
+
+func TestAttachmentReconcilerIgnoresForeignCSIDriverResources(t *testing.T) {
+	pv, pvc := newLocalPVAndPVC("foreign-vol", []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, nil)
+	require.NotNil(t, pv.Spec.CSI)
+	pv.Spec.CSI.Driver = "csi.foreign.example"
+	va := &storagev1.VolumeAttachment{
+		ObjectMeta: metav1.ObjectMeta{Name: "foreign-va"},
+		Spec: storagev1.VolumeAttachmentSpec{
+			Attacher: "csi.foreign.example",
+			NodeName: "node-a",
+			Source: storagev1.VolumeAttachmentSource{
+				PersistentVolumeName: &pv.Name,
+			},
+		},
+		Status: storagev1.VolumeAttachmentStatus{Attached: true},
+	}
+	driver := newAttachmentTestDriver(pv, pvc, va)
+	mockProvider := &MockOpenNebulaVolumeProviderTestify{}
+	mockProvider.On("ListCurrentAttachments", mock.Anything).Return([]opennebula.ObservedAttachment{{
+		VolumeHandle: "foreign-vol",
+		ImageID:      99,
+		NodeName:     "node-a",
+		NodeID:       101,
+		Backend:      "foreign",
+	}}, nil).Once()
+
+	server := NewControllerServer(driver, mockProvider, &MockSharedFilesystemProviderTestify{})
+	reconciler := NewAttachmentReconciler(server)
+	reconciler.orphanSeen["foreign-vol@node-a"] = time.Now().Add(-2 * reconciler.orphanGrace)
+	reconciler.staleVASeen["foreign-va"] = time.Now().Add(-2 * reconciler.staleVAGrace)
+
+	require.NoError(t, reconciler.ReconcileOnce(context.Background()))
+	_, err := driver.kubeRuntime.client.StorageV1().VolumeAttachments().Get(context.Background(), "foreign-va", metav1.GetOptions{})
+	require.NoError(t, err)
+	mockProvider.AssertNotCalled(t, "DetachVolume", mock.Anything, mock.Anything, mock.Anything)
+	mockProvider.AssertExpectations(t)
+}
+
+func TestAttachmentReconcilerIgnoresForeignAttacherForOwnedPV(t *testing.T) {
+	pv, pvc := newLocalPVAndPVC("vol-1", []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, nil)
+	va := &storagev1.VolumeAttachment{
+		ObjectMeta: metav1.ObjectMeta{Name: "foreign-attacher-va"},
+		Spec: storagev1.VolumeAttachmentSpec{
+			Attacher: "csi.foreign.example",
+			NodeName: "node-a",
+			Source: storagev1.VolumeAttachmentSource{
+				PersistentVolumeName: &pv.Name,
+			},
+		},
+		Status: storagev1.VolumeAttachmentStatus{Attached: true},
+	}
+	driver := newAttachmentTestDriver(pv, pvc, va)
+	mockProvider := &MockOpenNebulaVolumeProviderTestify{}
+	mockProvider.On("ListCurrentAttachments", mock.Anything).Return([]opennebula.ObservedAttachment{}, nil).Once()
+
+	server := NewControllerServer(driver, mockProvider, &MockSharedFilesystemProviderTestify{})
+	reconciler := NewAttachmentReconciler(server)
+	reconciler.staleVASeen["foreign-attacher-va"] = time.Now().Add(-2 * reconciler.staleVAGrace)
+
+	require.NoError(t, reconciler.ReconcileOnce(context.Background()))
+	_, err := driver.kubeRuntime.client.StorageV1().VolumeAttachments().Get(context.Background(), "foreign-attacher-va", metav1.GetOptions{})
+	require.NoError(t, err)
+	mockProvider.AssertExpectations(t)
+}
