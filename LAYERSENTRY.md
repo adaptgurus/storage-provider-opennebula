@@ -14,7 +14,7 @@ See `packaging/layersentry/IDENTITY_AND_MIGRATION.md` for `CSINode` behavior and
 
 ## RKE2 target and kubelet paths
 
-The current release candidate target is RKE2 `v1.36.4+rke2r1`, source commit `7479a59cdd2c8ce0b8871699a24daa4b7c28cc64`. As of 2026-09-11 there is no stable `v1.36.5` tag. The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile.
+The current published stable 1.36 target is RKE2 `v1.36.3+rke2r1`, source commit `c4f306e6c5fa18dfb447bf6b8a0423f2da68c939`. The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile.
 
 ## Kubernetes 1.36 sidecar release profile
 
@@ -37,7 +37,9 @@ Start from `packaging/layersentry/release-lock.template.json`, replace every dig
 ```bash
 python3 -m unittest discover -s packaging/layersentry -p 'test_*.py' -v
 go test ./...
-go test -tags layersentry ./cmd/opennebula-csi ./pkg/csi/driver
+go build -trimpath -tags layersentry ./cmd/opennebula-csi
+go test -tags layersentry ./cmd/opennebula-csi
+go test -tags layersentry ./pkg/csi/driver -run '^(TestLayerSentry|TestAttachmentReconciler)'
 
 python3 packaging/layersentry/build_chart.py \
   --release-lock /path/to/release-lock.json \
