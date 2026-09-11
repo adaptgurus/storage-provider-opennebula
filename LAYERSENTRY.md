@@ -14,11 +14,23 @@ See `packaging/layersentry/IDENTITY_AND_MIGRATION.md` for `CSINode` behavior and
 
 ## RKE2 target and kubelet paths
 
-The current release candidate target is RKE2 `v1.36.4+rke2r1`, source commit `7479a59cdd2c8ce0b8871699a24daa4b7c28cc64`. The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile.
+The current release candidate target is RKE2 `v1.36.4+rke2r1`, source commit `7479a59cdd2c8ce0b8871699a24daa4b7c28cc64`. As of 2026-09-11 there is no stable `v1.36.5` tag. The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile.
+
+## Kubernetes 1.36 sidecar release profile
+
+The upstream chart defaults remain unchanged for backward compatibility. The LayerSentry release lock instead requires the reviewed maintained sidecar tag lines for the Kubernetes 1.36 target:
+
+- `registry.k8s.io/sig-storage/csi-provisioner:v6.3.0`
+- `registry.k8s.io/sig-storage/csi-attacher:v4.13.0`
+- `registry.k8s.io/sig-storage/csi-resizer:v2.2.1`
+- `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0`
+- `registry.k8s.io/sig-storage/livenessprobe:v2.20.0`
+
+The release lock accepts those tag lines only when an immutable `@sha256:<digest>` is supplied. The current official snapshotter line reviewed during this work is v8.6.0, but LayerSentry does not include a snapshotter image while snapshot capability is unqualified.
 
 ## Release packaging
 
-`packaging/layersentry/build_chart.py` copies the identity-safe source chart without string replacement. It validates all required identity surfaces and requires a release lock containing immutable digest references for the LayerSentry driver image and every enabled CSI sidecar. The LayerSentry release lock keeps expansion, snapshots and clones false until those capabilities are separately qualified and creates no StorageClass by default.
+`packaging/layersentry/build_chart.py` copies the identity-safe source chart without string replacement. It validates all required identity surfaces and requires a release lock containing the exact reviewed image tag plus immutable digest for the LayerSentry driver and every enabled CSI sidecar. The LayerSentry release lock keeps expansion, snapshots and clones false until those capabilities are separately qualified and creates no StorageClass by default.
 
 Start from `packaging/layersentry/release-lock.template.json`, replace every digest placeholder with a verified digest, and then run:
 
@@ -48,12 +60,14 @@ The offline manifest contains only immutable image references. Mirror/preload th
 
 ## Capabilities and storage profiles
 
-The upstream-compatible engine contains backend-specific expansion plus feature-gated CephFS snapshot/clone paths. The LayerSentry-tagged release deliberately advertises only `CREATE_DELETE_VOLUME`, `PUBLISH_UNPUBLISH_VOLUME`, `LIST_VOLUMES` and `GET_CAPACITY`. It does **not** advertise `EXPAND_VOLUME`, `CREATE_DELETE_SNAPSHOT` or `CLONE_VOLUME` until a named production storage profile has passed the matching live qualification. This is enforced in the tagged binary, not only in Helm values.
+The upstream-compatible engine contains backend-specific expansion plus feature-gated CephFS snapshot/clone paths. The LayerSentry-tagged **controller** advertises only `CREATE_DELETE_VOLUME`, `PUBLISH_UNPUBLISH_VOLUME`, `LIST_VOLUMES` and `GET_CAPACITY`; its plugin identity service does not advertise online expansion. Therefore LayerSentry does not offer end-to-end expansion, snapshots or clones before backend qualification. The existing node service still advertises its implemented `NodeExpandVolume` capability; that node-local RPC is retained rather than falsified, but it does not make expansion a qualified LayerSentry storage capability by itself.
+
+`EXPAND_VOLUME`, `CREATE_DELETE_SNAPSHOT` and `CLONE_VOLUME` are promoted only after a named production storage profile passes the matching live qualification. Snapshotter deployment, snapshot classes and `StorageClass.allowVolumeExpansion` must remain disabled before that promotion.
 
 Do not infer qualification of one datastore/backend from another. The selected production storage profile is recorded in `packaging/layersentry/qualification-matrix.json`. Until a concrete backend is selected and live evidence is attached, it remains null and the overall status stays `NOT_QUALIFIED`.
 
 ## Required live qualification
 
-At minimum, a named backend profile must pass install, discovery, StorageClass, PVC create, PV bind, Pod mount, recognizable-data write, Pod restart, node restart, controller restart, detach/attach, worker replacement, identical data after replacement, delete, idempotent retry, duplicate operations, UNKNOWN reconciliation and tenant isolation. Expansion, snapshot, clone and snapshot restore are tested only after they are intentionally promoted for a backend; before that they remain unadvertised.
+At minimum, a named backend profile must pass install, discovery, StorageClass, PVC create, PV bind, Pod mount, recognizable-data write, Pod restart, node restart, controller restart, detach/attach, worker replacement, identical data after replacement, delete, idempotent retry, duplicate operations, UNKNOWN reconciliation and tenant isolation. Expansion, snapshot, clone and snapshot restore are tested only after they are intentionally promoted for a backend; before that they remain unavailable to the LayerSentry release profile.
 
 Source/unit/render success never substitutes for the worker-replacement and data-survival gates. Stateful workloads remain `NOT_QUALIFIED` until the live matrix and evidence requirements are complete.
