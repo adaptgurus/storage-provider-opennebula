@@ -20,20 +20,25 @@ from typing import Any
 
 LEGACY = "csi.opennebula.io"
 LAYERSENTRY = "csi.layersentry.io"
+TARGET_RELEASE_VERSION = "0.5.15-layersentry.1"
+TARGET_RELEASE_TAG = f"v{TARGET_RELEASE_VERSION}"
 TARGET_RKE2_VERSION = "v1.36.4+rke2r1"
 TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
-TARGET_DRIVER_IMAGE = "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1"
-TARGET_SIDECAR_IMAGES = {
+TARGET_DRIVER_IMAGE = f"ghcr.io/adaptgurus/layersentry-csi:{TARGET_RELEASE_TAG}"
+TARGET_REQUIRED_SIDECAR_IMAGES = {
     "provisioner": "registry.k8s.io/sig-storage/csi-provisioner:v6.3.0",
     "attacher": "registry.k8s.io/sig-storage/csi-attacher:v4.13.0",
-    "resizer": "registry.k8s.io/sig-storage/csi-resizer:v2.2.1",
     "nodeDriverRegistrar": "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0",
     "livenessProbe": "registry.k8s.io/sig-storage/livenessprobe:v2.20.0",
 }
-REQUIRED_SIDE_CARS = tuple(TARGET_SIDECAR_IMAGES)
+TARGET_RESIZER_IMAGE = "registry.k8s.io/sig-storage/csi-resizer:v2.2.1"
 DIGEST_REF = re.compile(r"^\S+:[^/@\s]+@sha256:[0-9a-f]{64}$")
+FULL_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 IDENTITY_CONTRACT = {
-    "csi-driver.yaml": ("opennebula-csi.driverName",),
+    "csi-driver.yaml": (
+        "opennebula-csi.driverName",
+        "opennebula-csi.validateLayerSentryProfile",
+    ),
     "csi-storageclass.yaml": ("opennebula-csi.driverName",),
     "csi-snapshotclass.yaml": ("opennebula-csi.driverName",),
     "csi-controller-server.yaml": (
@@ -54,13 +59,15 @@ def git(root: Path, *args: str) -> str:
 
 
 def validate_identity_source(templates: dict[str, str]) -> None:
-    """Reject source that reintroduces split CSI identity ownership."""
+    """Reject source that reintroduces split CSI identity or removes release admission."""
     helper = templates.get("_identity.tpl", "")
     if "define \"opennebula-csi.driverName\"" not in helper:
         raise ValueError("identity helper is missing from _identity.tpl")
+    if "define \"opennebula-csi.validateLayerSentryProfile\"" not in helper:
+        raise ValueError("LayerSentry fail-closed profile validator is missing from _identity.tpl")
     if LEGACY not in helper:
         raise ValueError("legacy default identity must remain explicit for backward compatibility")
-    if LAYERSENTRY in helper:
+    if f'default "{LAYERSENTRY}"' in helper:
         raise ValueError("LayerSentry identity belongs in the release profile, not the chart default")
     for name, required_tokens in IDENTITY_CONTRACT.items():
         text = templates.get(name)
@@ -87,11 +94,26 @@ def validate_exact_image(value: Any, field: str, expected_tag: str) -> str:
     return text
 
 
+def validate_release_identity(data: dict[str, Any]) -> dict[str, Any]:
+    release = data.get("release") or {}
+    if release.get("version") != TARGET_RELEASE_VERSION:
+        raise ValueError(f"release.version must be {TARGET_RELEASE_VERSION}")
+    if release.get("gitTag") != TARGET_RELEASE_TAG:
+        raise ValueError(f"release.gitTag must be {TARGET_RELEASE_TAG}")
+    source_commit = str(release.get("sourceCommit") or "").strip()
+    if not FULL_GIT_SHA.fullmatch(source_commit):
+        raise ValueError("release.sourceCommit must be a full 40-character lowercase Git SHA")
+    return release
+
+
 def load_release_lock(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid release lock: {exc}") from exc
+
+    validate_release_identity(data)
+
     rke2 = data.get("rke2") or {}
     if rke2.get("version") != TARGET_RKE2_VERSION:
         raise ValueError(f"release lock must target {TARGET_RKE2_VERSION}")
@@ -103,7 +125,7 @@ def load_release_lock(path: Path) -> dict[str, Any]:
 
     images = data.get("images") or {}
     validate_exact_image(images.get("driver"), "images.driver", TARGET_DRIVER_IMAGE)
-    for name, expected_tag in TARGET_SIDECAR_IMAGES.items():
+    for name, expected_tag in TARGET_REQUIRED_SIDECAR_IMAGES.items():
         validate_exact_image(images.get(name), f"images.{name}", expected_tag)
 
     capabilities = data.get("capabilities") or {}
@@ -113,6 +135,8 @@ def load_release_lock(path: Path) -> dict[str, Any]:
         raise ValueError("snapshots must remain false until snapshot qualification passes")
     if capabilities.get("clones") is not False:
         raise ValueError("clones must remain false until clone qualification passes")
+    if images.get("resizer"):
+        raise ValueError("resizer image must be omitted while expansion is not qualified")
     if images.get("snapshotter"):
         raise ValueError("snapshotter image must be omitted while snapshots are not qualified")
     return data
@@ -139,10 +163,11 @@ def build_profile(lock: dict[str, Any]) -> dict[str, Any]:
         "kubelet": {"rootDir": root_dir},
         "sidecars": {
             name: {"image": images[name]}
-            for name in REQUIRED_SIDE_CARS
+            for name in TARGET_REQUIRED_SIDECAR_IMAGES
         },
         "controller": {"leaderElection": {"leaseName": "layersentry-csi-controller"}},
         "inventoryController": {"enabled": False},
+        "resizer": {"enabled": False},
         "snapshotter": {"enabled": False},
         "featureGates": {"cephfsSnapshots": False, "cephfsClones": False},
         "snapshotClasses": [],
@@ -178,6 +203,10 @@ def main() -> int:
     lock = load_release_lock(args.release_lock.resolve())
     profile = build_profile(lock)
     source_commit = git(root, "rev-parse", "HEAD")
+    if lock["release"]["sourceCommit"] != source_commit:
+        raise ValueError(
+            "release.sourceCommit must equal the exact source HEAD used to generate the candidate chart"
+        )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="layersentry-chart-", dir=dest.parent) as tmp:
@@ -187,8 +216,8 @@ def main() -> int:
             "apiVersion": "v2",
             "name": "layersentry-csi",
             "type": "application",
-            "version": "0.5.15-layersentry.1",
-            "appVersion": "v0.5.15-layersentry.1",
+            "version": TARGET_RELEASE_VERSION,
+            "appVersion": TARGET_RELEASE_TAG,
             "description": "LayerSentry-qualified candidate using the OpenNebula CSI engine",
             "sources": [
                 "https://github.com/adaptgurus/storage-provider-opennebula",
@@ -198,11 +227,14 @@ def main() -> int:
         (staged / "layersentry-values.json").write_text(json.dumps(profile, indent=2) + "\n")
         (staged / "layersentry-release-lock.json").write_text(json.dumps(lock, indent=2) + "\n")
         (staged / "LAYERSENTRY-CANDIDATE.txt").write_text(
+            f"Release: {TARGET_RELEASE_TAG}\n"
             f"Source commit: {source_commit}\n"
             f"CSI identity: {LAYERSENTRY}\n"
             f"RKE2 target: {TARGET_RKE2_VERSION} ({TARGET_RKE2_COMMIT})\n"
             "NOT production-qualified until the live qualification matrix passes.\n"
+            "Expansion/snapshot/clone sidecars and resources remain disabled until qualified.\n"
             "Use -f layersentry-values.json plus an approved site values file.\n"
+            "LayerSentry site values must reference a scoped existing Secret; inline provider credentials are rejected.\n"
             "Do not rewrite existing bound PV spec.csi.driver fields. Legacy volumes keep their legacy driver.\n"
         )
         staged.rename(dest)

@@ -11,6 +11,11 @@ permissions:
 
 jobs:
   release:
+    # LayerSentry has a separate qualification/release path. Never let a
+    # vX.Y.Z-layersentry.N tag fall through the upstream-compatible publisher,
+    # which builds a different image/profile and intentionally disables default
+    # BuildKit attestations.
+    if: ${{ !contains(github.ref_name, '-layersentry.') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

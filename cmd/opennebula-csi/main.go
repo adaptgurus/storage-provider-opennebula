@@ -38,7 +38,7 @@ var (
 	driverName                   = flag.String("drivername", driver.DefaultDriverName, "CSI driver name")
 	pluginEndpoint               = flag.String("endpoint", driver.DefaultGRPCServerEndpoint, "CSI plugin endpoint")
 	nodeID                       = flag.String("nodeid", "", "Node ID")
-	maxVolumesPerNode            = flag.Uint64("maxVolumesPerNode", 255, "Maximum number of volumes that can be attached to a node")
+	maxVolumesPerNode            = flag.Int64("maxVolumesPerNode", 255, "Maximum number of volumes that can be attached to a node; 0 leaves the limit unspecified")
 	mode                         = flag.String("mode", "driver", "Execution mode: driver, preflight, inventory-controller, inventory-validate, support-bundle, volume-health, or hotplug-diagnose")
 	output                       = flag.String("output", "text", "Output format for preflight mode: text or json")
 	preflightDatastores          = flag.String("preflight-datastores", "", "Comma-separated datastore identifiers to validate during preflight")
@@ -62,6 +62,20 @@ func main() {
 	_ = flag.Set("logtostderr", "true")
 	ctrl.SetLogger(klog.Background())
 	flag.Parse()
+
+	// Only driver mode registers a CSI identity and advertises an attachment
+	// limit. The same image also provides preflight/inventory/support commands,
+	// which must remain usable without synthetic driver-only flags.
+	if *mode == "driver" {
+		if err := validateBuildDriverIdentity(*driverName); err != nil {
+			klog.Errorf("Invalid CSI identity for this build: %v", err)
+			os.Exit(2)
+		}
+		if *maxVolumesPerNode < 0 {
+			klog.Errorf("Invalid --maxVolumesPerNode=%d: value must be >= 0", *maxVolumesPerNode)
+			os.Exit(2)
+		}
+	}
 
 	config := config.LoadConfiguration()
 
@@ -90,6 +104,7 @@ func handle(cfg config.CSIPluginConfig) int {
 		driverOptions := &driver.DriverOptions{
 			NodeID:             *nodeID,
 			DriverName:         *driverName,
+			MaxVolumesPerNode:  *maxVolumesPerNode,
 			GRPCServerEndpoint: *pluginEndpoint,
 			PluginConfig:       cfg,
 			Mounter:            mounter,

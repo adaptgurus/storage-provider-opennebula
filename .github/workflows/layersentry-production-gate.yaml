@@ -1,0 +1,120 @@
+---
+name: LayerSentry CSI Production Gate
+
+on:
+  push:
+    tags:
+      - "v*-layersentry.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Require frozen production release lock
+        run: |
+          test -f packaging/layersentry/release-lock.json || {
+            echo "Missing packaging/layersentry/release-lock.json; production promotion is blocked." >&2
+            exit 1
+          }
+          ! grep -q 'REPLACE_WITH_' packaging/layersentry/release-lock.json
+
+      - name: Bind production tag to frozen build source
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t release_fields < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          lock = json.loads(Path('packaging/layersentry/release-lock.json').read_text())
+          release = lock.get('release') or {}
+          print(release.get('gitTag') or '')
+          print(release.get('sourceCommit') or '')
+          print(release.get('version') or '')
+          PY
+          )
+          release_tag="${release_fields[0]:-}"
+          source_commit="${release_fields[1]:-}"
+          release_version="${release_fields[2]:-}"
+
+          test "$release_tag" = "v${release_version}" || {
+            echo "release.gitTag must equal v<release.version>." >&2
+            exit 1
+          }
+          test "$GITHUB_REF_TYPE" = "tag" || {
+            echo "Production gate must run against an actual Git tag, not branch ref $GITHUB_REF." >&2
+            exit 1
+          }
+          test "$GITHUB_REF_NAME" = "$release_tag" || {
+            echo "Git tag $GITHUB_REF_NAME does not match frozen release.gitTag $release_tag." >&2
+            exit 1
+          }
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "release.sourceCommit is not a full lowercase Git SHA." >&2
+            exit 1
+          }
+          git cat-file -e "${source_commit}^{commit}"
+          git merge-base --is-ancestor "$source_commit" "$GITHUB_SHA" || {
+            echo "Frozen build source $source_commit is not an ancestor of release tag commit $GITHUB_SHA." >&2
+            exit 1
+          }
+
+          while IFS= read -r path; do
+            test -n "$path" || continue
+            case "$path" in
+              packaging/layersentry/release-lock.json|\
+              packaging/layersentry/qualification-matrix.json|\
+              packaging/layersentry/evidence/*|\
+              packaging/layersentry/qualified-profiles/*)
+                ;;
+              *)
+                echo "Code or non-evidence path changed after frozen build source: $path" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only "$source_commit" "$GITHUB_SHA")
+
+      - name: Validate production qualification evidence
+        run: |
+          python3 packaging/layersentry/validate_qualification.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.json \
+            --evidence-root .
+          python3 packaging/layersentry/validate_storage_profile.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.json \
+            --evidence-root .
+          python3 packaging/layersentry/validate_live_evidence.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.json \
+            --evidence-root .
+
+      - name: Confirm immutable offline image manifest
+        run: |
+          manifest="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          matrix = json.loads(Path('packaging/layersentry/qualification-matrix.json').read_text())
+          print(matrix['release_artifacts']['offline_image_manifest'])
+          PY
+          )"
+          test -n "$manifest"
+          test -f "$manifest"
+          test -s "$manifest"
+          if grep -Ev '^\S+:[^/@[:space:]]+@sha256:[0-9a-f]{64}$' "$manifest"; then
+            echo "Offline manifest contains a floating or malformed image reference." >&2
+            exit 1
+          fi
+
+      - name: Production gate passed
+        run: |
+          echo "LayerSentry CSI source/evidence gate passed for $GITHUB_SHA."
+          echo "The release tag, source provenance, exact deployment images and one live qualification run are bound together."

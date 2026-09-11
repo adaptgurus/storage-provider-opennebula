@@ -1,16 +1,20 @@
 //go:build layersentry
 
 // SPDX-License-Identifier: Apache-2.0
-// LayerSentry build variant. Preserve the upstream storage engine and license.
+// LayerSentry build policy. Preserve the upstream storage engine and license.
 package main
 
-import "flag"
+import "fmt"
 
 const layersentryDriverName = "csi.layersentry.io"
 
-func init() {
-	// main.go registers drivername before package init functions run.
-	// Explicit --drivername remains available for a separately tested legacy profile.
-	*driverName = layersentryDriverName
-	flag.Lookup("drivername").DefValue = layersentryDriverName
+func validateBuildDriverIdentity(name string) error {
+	if name != layersentryDriverName {
+		return fmt.Errorf(
+			"LayerSentry build requires explicit --drivername=%s; got %q",
+			layersentryDriverName,
+			name,
+		)
+	}
+	return nil
 }

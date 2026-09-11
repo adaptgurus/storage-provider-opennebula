@@ -1,4 +1,5 @@
 {{- include "opennebula-csi.validateDriverIdentityArgs" . -}}
+{{- include "opennebula-csi.validateLayerSentryProfile" . -}}
 # Spec: https://kubernetes-csi.github.io/docs/csi-driver-object.html#what-fields-does-the-csidriver-object-have
 ---
 apiVersion: storage.k8s.io/v1

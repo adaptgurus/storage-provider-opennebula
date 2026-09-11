@@ -252,6 +252,9 @@ preflight:
   nodeStageSecretRefs: []
   provisionerSecretRefs: []
 
+resizer:
+  enabled: true
+
 snapshotter:
   enabled: true
   image: registry.k8s.io/sig-storage/csi-snapshotter:v8.2.1

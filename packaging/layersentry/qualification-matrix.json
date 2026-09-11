@@ -2,15 +2,20 @@
   "schema_version": 1,
   "product": "LayerSentry CSI",
   "target": {
-    "kubernetes": "1.36",
+    "release_version": "0.5.15-layersentry.1",
+    "release_tag": "v0.5.15-layersentry.1",
+    "source_commit": null,
+    "kubernetes": "1.36.4",
     "rke2": "v1.36.4+rke2r1",
     "rke2_commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
     "driver_identity": "csi.layersentry.io"
   },
   "selected_storage_profile": null,
+  "selected_storage_profile_file": null,
   "overall_status": "NOT_QUALIFIED",
-  "qualification_rule": "Do not set QUALIFIED until a named backend profile passes data survival and recovery, including worker replacement with identical data.",
+  "qualification_rule": "Do not set QUALIFIED until one exact named backend profile passes data survival and recovery, including worker replacement with identical data. Baseline and final deployed CSI image identity must match the same frozen release lock and qualification run. Qualification does not extend to other vendors, models, firmware, transports, datastore types, StorageClass parameters, node OS/kernel combinations, or topologies.",
   "tests": [
+    {"id": "release_identity_baseline", "status": "NOT_RUN", "evidence": []},
     {"id": "install", "status": "NOT_RUN", "evidence": []},
     {"id": "discovery", "status": "NOT_RUN", "evidence": []},
     {"id": "storageclass", "status": "SOURCE_RENDER_GATE_ADDED", "evidence": []},
@@ -34,12 +39,15 @@
     {"id": "duplicate_operations", "status": "NOT_RUN", "evidence": []},
     {"id": "unknown_reconciliation", "status": "SOURCE_IDENTITY_ISOLATION_TEST_ADDED", "evidence": [], "note": "Live ambiguous-outcome/reconciliation tests are still required."},
     {"id": "tenant_isolation", "status": "NOT_RUN", "evidence": []},
-    {"id": "foreign_csi_isolation", "status": "SOURCE_NEGATIVE_TEST_ADDED", "evidence": []}
+    {"id": "foreign_csi_isolation", "status": "SOURCE_NEGATIVE_TEST_ADDED", "evidence": [], "note": "Live foreign-driver coexistence evidence is still required."},
+    {"id": "release_identity_final", "status": "NOT_RUN", "evidence": []}
   ],
   "release_artifacts": {
     "driver_image_digest": null,
     "sbom": null,
     "provenance": null,
+    "source_provenance": null,
+    "artifact_checksums": null,
     "offline_image_manifest": null
   }
 }
