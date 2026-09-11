@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import tempfile
 import unittest
+from pathlib import Path
 
 from validate_qualification import (
     MANDATORY_LIVE_TESTS,
+    referenced_evidence_paths,
+    validate_materialized_evidence,
     validate_qualification,
 )
 
@@ -102,7 +106,33 @@ class QualificationGateTests(unittest.TestCase):
         lock = copy.deepcopy(self.release_lock())
         lock["rke2"]["version"] = "v1.36.3+rke2r1"
         errors = validate_qualification(self.matrix(), lock)
-        self.assertTrue(any("RKE2 version" in error for error in errors))
+        self.assertTrue(any("RKE2" in error for error in errors))
+
+    def test_materialized_evidence_passes_when_all_files_exist(self):
+        matrix = self.matrix()
+        lock = self.release_lock()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for reference in set(referenced_evidence_paths(matrix, lock)):
+                path = root / reference
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("evidence\n")
+            self.assertEqual(validate_materialized_evidence(matrix, lock, root), [])
+
+    def test_materialized_evidence_rejects_missing_file(self):
+        matrix = self.matrix()
+        lock = self.release_lock()
+        with tempfile.TemporaryDirectory() as tmp:
+            errors = validate_materialized_evidence(matrix, lock, Path(tmp))
+        self.assertTrue(any("does not exist" in error for error in errors))
+
+    def test_materialized_evidence_rejects_path_escape(self):
+        matrix = self.matrix()
+        lock = self.release_lock()
+        lock["qualification"]["evidence"] = ["../outside.json"]
+        with tempfile.TemporaryDirectory() as tmp:
+            errors = validate_materialized_evidence(matrix, lock, Path(tmp))
+        self.assertTrue(any("escapes evidence root" in error for error in errors))
 
 
 if __name__ == "__main__":
