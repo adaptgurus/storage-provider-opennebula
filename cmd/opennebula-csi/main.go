@@ -63,6 +63,11 @@ func main() {
 	ctrl.SetLogger(klog.Background())
 	flag.Parse()
 
+	if err := validateBuildDriverIdentity(*driverName); err != nil {
+		klog.Errorf("Invalid CSI identity for this build: %v", err)
+		os.Exit(2)
+	}
+
 	config := config.LoadConfiguration()
 
 	exitCode := handle(config)
