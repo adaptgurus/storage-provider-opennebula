@@ -69,7 +69,7 @@ jobs:
                   "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0@sha256:{digest}",
                   "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.16.0@sha256:{digest}",
               },
-              "capabilities": {"snapshots": False, "clones": False},
+              "capabilities": {"expansion": False, "snapshots": False, "clones": False},
           }
           root = Path(os.environ["RUNNER_TEMP"])
           (root / "release-lock.json").write_text(json.dumps(lock))
