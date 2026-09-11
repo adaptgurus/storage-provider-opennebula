@@ -9,6 +9,8 @@ on:
       - "helm/opennebula-csi/**"
       - "packaging/layersentry/**"
       - ".github/workflows/layersentry-t4-source-validation.yaml"
+      - ".github/workflows/layersentry-production-gate.yaml"
+      - ".github/workflows/release-csi.yaml"
   workflow_dispatch: {}
 
 permissions:
@@ -89,10 +91,16 @@ jobs:
       - name: Build digest-locked LayerSentry candidate and render identity
         run: |
           python3 - <<'PY'
-          import json, os
+          import json, os, subprocess
           from pathlib import Path
           digest = "a" * 64
+          source_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           lock = {
+              "release": {
+                  "version": "0.5.15-layersentry.1",
+                  "gitTag": "v0.5.15-layersentry.1",
+                  "sourceCommit": source_commit,
+              },
               "rke2": {
                   "version": "v1.36.4+rke2r1",
                   "commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
