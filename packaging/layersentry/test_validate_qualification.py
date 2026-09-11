@@ -13,8 +13,8 @@ class QualificationGateTests(unittest.TestCase):
         digest = "a" * 64
         return {
             "rke2": {
-                "version": "v1.36.3+rke2r1",
-                "commit": "c4f306e6c5fa18dfb447bf6b8a0423f2da68c939",
+                "version": "v1.36.4+rke2r1",
+                "commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
                 "kubeletRootDir": "/var/lib/kubelet",
             },
             "images": {
@@ -46,7 +46,7 @@ class QualificationGateTests(unittest.TestCase):
             "schema_version": 1,
             "product": "LayerSentry CSI",
             "target": {
-                "kubernetes": "1.36",
+                "kubernetes": "1.36.4",
                 "rke2": lock["rke2"]["version"],
                 "rke2_commit": lock["rke2"]["commit"],
                 "driver_identity": "csi.layersentry.io",
@@ -100,7 +100,7 @@ class QualificationGateTests(unittest.TestCase):
 
     def test_wrong_rke2_pin_fails(self):
         lock = copy.deepcopy(self.release_lock())
-        lock["rke2"]["version"] = "v1.36.4+rke2r1"
+        lock["rke2"]["version"] = "v1.36.3+rke2r1"
         errors = validate_qualification(self.matrix(), lock)
         self.assertTrue(any("RKE2 version" in error for error in errors))
 
