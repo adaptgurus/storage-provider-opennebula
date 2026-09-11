@@ -1,46 +1,59 @@
-# LayerSentry CSI — initial downstream build variant
+# LayerSentry CSI — production qualification lane
 
-Status: implementation bootstrap, NOT production-qualified. Prepared 10 September 2026.
+Status: SOURCE IN PROGRESS / LIVE `NOT_QUALIFIED`.
 
-This is LayerSentry-owned packaging and a distinct opt-in CSI identity built on the existing OpenNebula CSI engine. It does not rewrite provisioning, attachment, filesystem or block operations, and it does not implement a universal replacement for Ceph/HPE/Dell/IBM/vendor CSI. Preserve upstream Apache-2.0 notices and provenance. The original chart, default build and default branch behavior remain unchanged.
+This downstream lane preserves the existing OpenNebula CSI storage engine and qualifies only the OpenNebula-managed storage path that the driver actually implements. It is not a universal SAN/NAS driver and does not replace direct Ceph CSI, vendor array CSI, NFS CSI, or other independent storage plugins.
 
-## What changed
-The `layersentry` Go build tag selects `csi.layersentry.io` as the default identity. Confirm control of that identifier namespace before the first production deployment; it is a proposed technical identity, not a domain-ownership claim. Build the package (`./cmd/opennebula-csi`), not just main.go, so the tagged file is included. Explicit --drivername remains available for a separately qualified legacy identity profile.
+## Identity model
 
-`packaging/layersentry/build_chart.py` generates a separate candidate chart from the exact inspected upstream chart tree. It aligns CSIDriver/StorageClass/registrar/socket identity and supplies the same flag to node and controller. It preserves upstream provider API groups and ordinary storage metadata. It refuses changed chart inputs, uncommitted chart edits, output inside the source repository and non-digest driver-image references. No cluster operation occurs. The supplied overlay disables the optional snapshotter and creates no StorageClass by default; this does not disable every snapshot RPC in the underlying engine.
+The `layersentry` Go build tag keeps `csi.layersentry.io` as the LayerSentry binary default, but the Helm chart no longer relies on a binary-only rename. `driver.name` is the deployment identity source of truth. The chart default remains `csi.opennebula.io` for backward compatibility; the LayerSentry release profile sets `driver.name: csi.layersentry.io` and explicitly passes the same value to both controller and node processes.
 
-## Candidate build and checks
-Run in this repository:
+The resolved identity is also used by `CSIDriver`, generated `StorageClass` objects, the kubelet CSI plugin directory and registrar socket. Attachment reconciliation now filters both `PersistentVolume.spec.csi.driver` and `VolumeAttachment.spec.attacher` against the running driver identity before it can detach or delete anything. `driver.extraArgs` cannot set `--drivername`; Helm rendering fails if a second identity source is attempted.
+
+See `packaging/layersentry/IDENTITY_AND_MIGRATION.md` for `CSINode` behavior and legacy-volume coexistence. Existing bound PVs are never rewritten to simulate migration.
+
+## RKE2 target and kubelet paths
+
+The current release candidate target is RKE2 `v1.36.4+rke2r1`, source commit `7479a59cdd2c8ce0b8871699a24daa4b7c28cc64`. The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile.
+
+## Release packaging
+
+`packaging/layersentry/build_chart.py` copies the identity-safe source chart without string replacement. It validates all required identity surfaces and requires a release lock containing immutable digest references for the LayerSentry driver image and every enabled CSI sidecar. The LayerSentry profile disables snapshots and clones until those capabilities are separately qualified and creates no StorageClass by default.
+
+Start from `packaging/layersentry/release-lock.template.json`, replace every digest placeholder with a verified digest, and then run:
 
 ```bash
 python3 -m unittest discover -s packaging/layersentry -p 'test_*.py' -v
-go test -tags layersentry ./cmd/opennebula-csi
 go test ./...
-```
+go test -tags layersentry ./cmd/opennebula-csi ./pkg/csi/driver
 
-The Dockerfile requires separately verified GO_IMAGE and RUNTIME_IMAGE build arguments. Supply compatible immutable image@sha256 references; do not substitute unverified floating defaults. The runtime must already contain the required Ceph/mount/filesystem tools. The complete image/dependency/sidecar release lock remains a separate gate. No ready-made published LayerSentry image is claimed.
-
-After building, scanning and publishing a candidate image, generate the chart with its actual digest:
-
-```bash
 python3 packaging/layersentry/build_chart.py \
-  --output ../layersentry-csi-candidate \
-  --image-repository "$LAYER_CSI_IMAGE_REPOSITORY" \
-  --image-tag-digest "$LAYER_CSI_IMAGE_TAG_AT_SHA256"
-helm template layersentry-csi ../layersentry-csi-candidate \
-  -f ../layersentry-csi-candidate/layersentry-values.json \
+  --release-lock /path/to/release-lock.json \
+  --output /path/outside/repository/layersentry-csi
+
+python3 packaging/layersentry/emit_offline_manifest.py \
+  --release-lock /path/to/release-lock.json \
+  --output /path/outside/repository/images.txt
+
+helm template layersentry /path/outside/repository/layersentry-csi \
+  -f /path/outside/repository/layersentry-csi/layersentry-values.json \
   -f /path/to/reviewed-site-values.yaml
 ```
 
-The site values must supply trusted endpoint, scoped secret reference, datastore allowlist, resources, storage/topology and private registry settings. They must not override the identity flag inconsistently. Run Helm lint/render/schema and driver-identity checks before installation. The unmodified upstream defaults are not an approved site profile. Review inherited sidecar images and feature gates. Production enablement remains blocked until the tests below pass.
+The offline manifest contains only immutable image references. Mirror/preload those exact images into the approved disconnected registry/bundle; do not replace them with floating tags.
 
-## Compatibility and data safety
-Existing volumes using `csi.opennebula.io` do not become LayerSentry volumes by changing a label. Retain their driver and identity until a tested migration moves them to new claims, or qualify a compatibility build that preserves the old identity. Never bulk-edit PV driver/volume handles or allow two independent controllers to mutate the same backend volumes. All driver-related identities, classes and socket paths must agree.
+## LayerSentry-owned image SBOM and provenance
 
-Inherited limitations remain: local image SIZE can be stale after expansion; detached local persistent expansion is rejected; CephFS node expansion can produce NodeResizeError; local storage is not replicated by CSI. Replacing a VM must not delete independent volumes, but loss of an unreplicated physical datastore cannot be repaired by branding a driver. Direct Ceph/vendor CSI keep their own technical driver identities and supported capabilities.
+`packaging/layersentry/build_release.sh` refuses a dirty worktree and requires digest-pinned builder/runtime images. It creates a local OCI image archive using `docker buildx` with `--sbom=true` and `--provenance=mode=max`, plus source metadata and archive SHA-256 evidence. Running the script produces build artifacts; merely having the script in source is not evidence that an SBOM/provenance artifact exists.
 
-## Required next gates
-Full Go build/tests, current dependency and sidecar qualification, Helm render/schema, CSI sanity/conformance, provision/attach/mount/detach/resize, node replacement with identical data, controller failover, duplicate requests, negative tenant authorization, explicit retention/deletion, legacy identity coexistence/migration, snapshot/restore where advertised and denied-external-egress operation. Each is separately evidenced. No new backup-chain, DR or migration capability is delivered by this build variant.
+## Capabilities and storage profiles
 
-## Validation performed for this initial change
-Ten Python packaging unit tests passed; Python syntax checks and gofmt passed. Tests exercise synthetic template fixtures and profile validation, not a real Helm render or provider operation. Full Go dependencies/build, container build, Helm, CSI and live tests were not executed in this preparation environment. The Go identity regression test is written but not run.
+Snapshots and clones are `NOT_ADVERTISED` by the LayerSentry release profile. Volume expansion is not considered production-supported for a profile until that exact backend passes expansion and recovery tests. Do not infer qualification of one datastore/backend from another.
+
+The selected production storage profile is recorded in `packaging/layersentry/qualification-matrix.json`. Until a concrete backend is selected and live evidence is attached, it remains null and the overall status stays `NOT_QUALIFIED`.
+
+## Required live qualification
+
+At minimum, a named backend profile must pass install, discovery, StorageClass, PVC create, PV bind, Pod mount, recognizable-data write, Pod restart, node restart, controller restart, detach/attach, worker replacement, identical data after replacement, delete, idempotent retry, duplicate operations, UNKNOWN reconciliation and tenant isolation. Expansion, snapshot, clone and snapshot restore are tested only when advertised; otherwise they remain disabled.
+
+Source/unit/render success never substitutes for the worker-replacement and data-survival gates. Stateful workloads remain `NOT_QUALIFIED` until the live matrix and evidence requirements are complete.
