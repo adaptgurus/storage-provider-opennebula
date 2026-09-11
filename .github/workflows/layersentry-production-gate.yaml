@@ -1,0 +1,54 @@
+---
+name: LayerSentry CSI Production Gate
+
+on:
+  push:
+    tags:
+      - "v*-layersentry.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+
+      - name: Require frozen production release lock
+        run: |
+          test -f packaging/layersentry/release-lock.json || {
+            echo "Missing packaging/layersentry/release-lock.json; production promotion is blocked." >&2
+            exit 1
+          }
+          ! grep -q 'REPLACE_WITH_' packaging/layersentry/release-lock.json
+
+      - name: Validate production qualification evidence
+        run: |
+          python3 packaging/layersentry/validate_qualification.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.json
+
+      - name: Confirm immutable offline image manifest
+        run: |
+          manifest="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          matrix = json.loads(Path('packaging/layersentry/qualification-matrix.json').read_text())
+          print(matrix['release_artifacts']['offline_image_manifest'])
+          PY
+          )"
+          test -n "$manifest"
+          test -f "$manifest"
+          test -s "$manifest"
+          if grep -Ev '^\S+:[^/@[:space:]]+@sha256:[0-9a-f]{64}$' "$manifest"; then
+            echo "Offline manifest contains a floating or malformed image reference." >&2
+            exit 1
+          fi
+
+      - name: Production gate passed
+        run: |
+          echo "LayerSentry CSI source/evidence gate passed for $GITHUB_SHA."
+          echo "This gate validates recorded evidence; it does not itself deploy or publish artifacts."
