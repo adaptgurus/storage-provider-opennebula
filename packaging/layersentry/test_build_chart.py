@@ -7,8 +7,10 @@ from pathlib import Path
 from build_chart import (
     LAYERSENTRY,
     LEGACY,
+    TARGET_DRIVER_IMAGE,
     TARGET_RKE2_COMMIT,
     TARGET_RKE2_VERSION,
+    TARGET_SIDECAR_IMAGES,
     build_profile,
     load_release_lock,
     validate_identity_source,
@@ -40,20 +42,15 @@ class PackagingTests(unittest.TestCase):
 
     def release_lock(self):
         digest = "a" * 64
+        images = {"driver": f"{TARGET_DRIVER_IMAGE}@sha256:{digest}"}
+        images.update({name: f"{image}@sha256:{digest}" for name, image in TARGET_SIDECAR_IMAGES.items()})
         return {
             "rke2": {
                 "version": TARGET_RKE2_VERSION,
                 "commit": TARGET_RKE2_COMMIT,
                 "kubeletRootDir": "/var/lib/kubelet",
             },
-            "images": {
-                "driver": f"ghcr.io/adaptgurus/layersentry-csi:v0.5.15-ls.1@sha256:{digest}",
-                "provisioner": f"registry.k8s.io/sig-storage/csi-provisioner:v5.3.0@sha256:{digest}",
-                "attacher": f"registry.k8s.io/sig-storage/csi-attacher:v4.9.0@sha256:{digest}",
-                "resizer": f"registry.k8s.io/sig-storage/csi-resizer:v1.13.2@sha256:{digest}",
-                "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0@sha256:{digest}",
-                "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.16.0@sha256:{digest}",
-            },
+            "images": images,
             "capabilities": {"expansion": False, "snapshots": False, "clones": False},
         }
 
@@ -87,16 +84,34 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(profile["storageClasses"], [])
         self.assertNotIn("extraArgs", profile["driver"])
 
-    def test_sidecars_remain_digest_pinned_in_profile(self):
+    def test_sidecars_remain_reviewed_and_digest_pinned_in_profile(self):
         lock = self.release_lock()
         profile = build_profile(lock)
         for name, config in profile["sidecars"].items():
             self.assertEqual(config["image"], lock["images"][name])
-            self.assertIn("@sha256:", config["image"])
+            self.assertTrue(config["image"].startswith(TARGET_SIDECAR_IMAGES[name] + "@sha256:"))
 
     def test_release_lock_rejects_floating_image(self):
         data = self.release_lock()
-        data["images"]["attacher"] = "registry.k8s.io/sig-storage/csi-attacher:v4.9.0"
+        data["images"]["attacher"] = TARGET_SIDECAR_IMAGES["attacher"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
+
+    def test_release_lock_rejects_unreviewed_sidecar_tag(self):
+        data = self.release_lock()
+        data["images"]["provisioner"] = "registry.k8s.io/sig-storage/csi-provisioner:v5.3.0@sha256:" + "b" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                load_release_lock(path)
+
+    def test_release_lock_rejects_wrong_driver_tag(self):
+        data = self.release_lock()
+        data["images"]["driver"] = "ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.0@sha256:" + "b" * 64
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lock.json"
             path.write_text(json.dumps(data))
@@ -132,7 +147,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_release_lock_rejects_snapshotter_when_snapshots_disabled(self):
         data = self.release_lock()
-        data["images"]["snapshotter"] = "registry.k8s.io/sig-storage/csi-snapshotter:v8.2.1@sha256:" + "b" * 64
+        data["images"]["snapshotter"] = "registry.k8s.io/sig-storage/csi-snapshotter:v8.6.0@sha256:" + "b" * 64
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lock.json"
             path.write_text(json.dumps(data))
