@@ -39,6 +39,7 @@ class LiveEvidenceGateTests(unittest.TestCase):
             tests.append({"id": test_id, "status": "PASS", "evidence": [ref]})
             target = {
                 "rke2": lock["rke2"]["version"],
+                "kubernetes": "v1.36.4",
                 "driver": "csi.layersentry.io",
                 "storage_class": "layersentry-prod",
             }
@@ -85,6 +86,27 @@ class LiveEvidenceGateTests(unittest.TestCase):
             path.write_text(json.dumps(data) + "\n")
             errors = validate_live_evidence(matrix, lock, root, "c" * 64)
             self.assertTrue(any("exactly one run_id" in error for error in errors))
+
+    def test_wrong_kubernetes_patch_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix, lock = self.materialize(root)
+            path = root / "evidence/node_restart.json"
+            data = json.loads(path.read_text())
+            data["target"]["kubernetes"] = "v1.36.3"
+            path.write_text(json.dumps(data) + "\n")
+            errors = validate_live_evidence(matrix, lock, root, "c" * 64)
+            self.assertTrue(any("Kubernetes target must be v1.36.4" in error for error in errors))
+
+    def test_multiple_evidence_references_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix, lock = self.materialize(root)
+            next(item for item in matrix["tests"] if item["id"] == "node_restart")["evidence"].append(
+                "evidence/other.json"
+            )
+            errors = validate_live_evidence(matrix, lock, root, "c" * 64)
+            self.assertTrue(any("exactly one canonical JSON evidence file" in error for error in errors))
 
     def test_final_identity_wrong_image_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
