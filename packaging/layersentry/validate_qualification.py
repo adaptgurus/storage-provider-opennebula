@@ -11,10 +11,12 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 DRIVER_IDENTITY = "csi.layersentry.io"
-TARGET_KUBERNETES = "1.36"
+TARGET_KUBERNETES = "1.36.4"
+TARGET_RKE2 = "v1.36.4+rke2r1"
+TARGET_RKE2_COMMIT = "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64"
 
 MANDATORY_LIVE_TESTS = (
     "install",
@@ -63,9 +65,15 @@ def load_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def has_evidence(record: dict[str, Any]) -> bool:
+def evidence_values(record: dict[str, Any]) -> list[str]:
     evidence = record.get("evidence")
-    return isinstance(evidence, list) and any(str(item).strip() for item in evidence)
+    if not isinstance(evidence, list):
+        return []
+    return [str(item).strip() for item in evidence if str(item).strip()]
+
+
+def has_evidence(record: dict[str, Any]) -> bool:
+    return bool(evidence_values(record))
 
 
 def test_map(matrix: dict[str, Any], errors: list[str]) -> dict[str, dict[str, Any]]:
@@ -99,10 +107,14 @@ def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any])
         errors.append(f"qualification target kubernetes must be {TARGET_KUBERNETES}")
     if target.get("driver_identity") != DRIVER_IDENTITY:
         errors.append(f"qualification target driver_identity must be {DRIVER_IDENTITY}")
-    if target.get("rke2") != rke2.get("version"):
-        errors.append("qualification target RKE2 version does not match release lock")
-    if target.get("rke2_commit") != rke2.get("commit"):
-        errors.append("qualification target RKE2 commit does not match release lock")
+    if target.get("rke2") != TARGET_RKE2 or rke2.get("version") != TARGET_RKE2:
+        errors.append(f"qualification and release lock must target RKE2 {TARGET_RKE2}")
+    if target.get("rke2_commit") != TARGET_RKE2_COMMIT or rke2.get("commit") != TARGET_RKE2_COMMIT:
+        errors.append(f"qualification and release lock must pin RKE2 commit {TARGET_RKE2_COMMIT}")
+
+    root_dir = str(rke2.get("kubeletRootDir") or "").strip()
+    if not root_dir.startswith("/") or root_dir == "/":
+        errors.append("release lock rke2.kubeletRootDir must be an absolute non-root path")
 
     profile = str(matrix.get("selected_storage_profile") or "").strip()
     if not profile:
@@ -167,16 +179,71 @@ def validate_qualification(matrix: dict[str, Any], release_lock: dict[str, Any])
     return errors
 
 
+def referenced_evidence_paths(matrix: dict[str, Any], release_lock: dict[str, Any]) -> Iterable[str]:
+    qualification = release_lock.get("qualification") or {}
+    for value in qualification.get("evidence") or []:
+        text = str(value).strip()
+        if text:
+            yield text
+
+    for record in matrix.get("tests") or []:
+        if isinstance(record, dict) and record.get("status") == "PASS":
+            yield from evidence_values(record)
+
+    artifacts = matrix.get("release_artifacts") or {}
+    for field in ("sbom", "provenance", "offline_image_manifest"):
+        text = str(artifacts.get(field) or "").strip()
+        if text:
+            yield text
+
+
+def validate_materialized_evidence(
+    matrix: dict[str, Any], release_lock: dict[str, Any], evidence_root: Path
+) -> list[str]:
+    errors: list[str] = []
+    root = evidence_root.resolve()
+    seen: set[str] = set()
+    for reference in referenced_evidence_paths(matrix, release_lock):
+        if reference in seen:
+            continue
+        seen.add(reference)
+        path = Path(reference)
+        if path.is_absolute():
+            errors.append(f"evidence reference must be repository-relative, not absolute: {reference}")
+            continue
+        resolved = (root / path).resolve()
+        if resolved != root and root not in resolved.parents:
+            errors.append(f"evidence reference escapes evidence root: {reference}")
+            continue
+        if not resolved.is_file():
+            errors.append(f"evidence file does not exist: {reference}")
+            continue
+        try:
+            if resolved.stat().st_size <= 0:
+                errors.append(f"evidence file is empty: {reference}")
+        except OSError as exc:
+            errors.append(f"cannot stat evidence file {reference}: {exc}")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--matrix", type=Path, required=True)
     parser.add_argument("--release-lock", type=Path, required=True)
+    parser.add_argument(
+        "--evidence-root",
+        type=Path,
+        default=Path.cwd(),
+        help="repository/evidence root used to resolve all recorded evidence paths",
+    )
     args = parser.parse_args()
 
     try:
         matrix = load_json(args.matrix)
         release_lock = load_json(args.release_lock)
         errors = validate_qualification(matrix, release_lock)
+        if not errors:
+            errors.extend(validate_materialized_evidence(matrix, release_lock, args.evidence_root))
     except ValueError as exc:
         print(f"NOT_QUALIFIED: {exc}")
         return 2
@@ -187,7 +254,7 @@ def main() -> int:
             print(f"- {error}")
         return 1
 
-    print("QUALIFIED: production promotion evidence is internally consistent")
+    print("QUALIFIED: production promotion evidence is internally consistent and materialized")
     return 0
 
 
