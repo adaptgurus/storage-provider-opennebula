@@ -97,35 +97,38 @@ class OCIAttestationTests(unittest.TestCase):
                 },
             ],
         }
+        index_bytes = encoded(index)
+        index_digest = digest(index_bytes)
 
         tmp = tempfile.TemporaryDirectory()
         archive_path = Path(tmp.name) / "image.oci.tar"
         with tarfile.open(archive_path, "w") as archive:
-            files = {"index.json": encoded(index)}
+            files = {"index.json": index_bytes}
             for blob_digest, blob_data in blobs.items():
                 files[f"blobs/sha256/{blob_digest.split(':', 1)[1]}"] = blob_data
             for name, data in files.items():
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
                 archive.addfile(info, io.BytesIO(data))
-        return tmp, archive_path, runnable_digest
+        return tmp, archive_path, index_digest, runnable_digest
 
     def test_valid_sbom_and_provenance_pass(self):
-        tmp, archive, expected_digest = self.build_archive()
+        tmp, archive, expected_index, expected_runnable = self.build_archive()
         self.addCleanup(tmp.cleanup)
-        runnable, sboms, provenance = verify_archive(archive)
-        self.assertEqual(runnable, expected_digest)
+        index_digest, runnable, sboms, provenance = verify_archive(archive)
+        self.assertEqual(index_digest, expected_index)
+        self.assertEqual(runnable, expected_runnable)
         self.assertEqual(len(sboms), 1)
         self.assertEqual(len(provenance), 1)
 
     def test_missing_provenance_fails(self):
-        tmp, archive, _ = self.build_archive(include_provenance=False)
+        tmp, archive, _, _ = self.build_archive(include_provenance=False)
         self.addCleanup(tmp.cleanup)
         with self.assertRaisesRegex(VerificationError, "SLSA provenance"):
             verify_archive(archive)
 
     def test_tampered_attestation_blob_fails(self):
-        tmp, archive, _ = self.build_archive(tamper_sbom=True)
+        tmp, archive, _, _ = self.build_archive(tamper_sbom=True)
         self.addCleanup(tmp.cleanup)
         with self.assertRaisesRegex(VerificationError, "digest mismatch"):
             verify_archive(archive)
