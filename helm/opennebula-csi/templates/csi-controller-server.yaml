@@ -5,6 +5,11 @@
 {{- $controllerLeaderElection := (get $controller "leaderElection") | default dict -}}
 {{- $controllerLogLevel := (get $controller "logLevel") | default 3 -}}
 {{- $controllerSidecarLogLevel := (get $controller "sidecarLogLevel") | default 3 -}}
+{{- $resizer := (get .Values "resizer") | default dict -}}
+{{- $resizerEnabled := true -}}
+{{- if hasKey $resizer "enabled" -}}
+{{- $resizerEnabled = (get $resizer "enabled") -}}
+{{- end -}}
 {{- $lastNodePreference := (get .Values.driver "lastNodePreference") | default dict -}}
 {{- $lastNodePreferenceWebhook := (get $lastNodePreference "webhook") | default dict -}}
 {{- $lastNodePreferenceWebhookEnabled := and ((get $lastNodePreference "enabled") | default true) ((get $lastNodePreferenceWebhook "enabled") | default true) -}}
@@ -175,6 +180,7 @@ spec:
           volumeMounts:
             - name: csi-socket-dir
               mountPath: /csi
+        {{- if $resizerEnabled }}
         - name: csi-resizer
           image: {{ include "opennebula-csi.sidecarImage" (dict "context" . "name" "resizer" "default" "registry.k8s.io/sig-storage/csi-resizer:v1.13.2") | quote }}
           imagePullPolicy: IfNotPresent
@@ -199,6 +205,7 @@ spec:
           volumeMounts:
             - name: csi-socket-dir
               mountPath: /csi
+        {{- end }}
         {{- if .Values.snapshotter.enabled }}
         - name: csi-snapshotter
           image: {{ .Values.snapshotter.image | quote }}
