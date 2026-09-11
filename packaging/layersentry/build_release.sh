@@ -21,12 +21,18 @@ EOF
 version="$1"
 out="$2"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-layersentry\.[0-9]+$ ]] || usage
+release_tag="v${version}"
 : "${GO_IMAGE:?GO_IMAGE must be pinned by digest}"
 : "${RUNTIME_IMAGE:?RUNTIME_IMAGE must be pinned by digest}"
 : "${IMAGE_REF:?IMAGE_REF must be an explicit release tag}"
 [[ "$GO_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "GO_IMAGE must use @sha256" >&2; exit 2; }
 [[ "$RUNTIME_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "RUNTIME_IMAGE must use @sha256" >&2; exit 2; }
 [[ "$IMAGE_REF" =~ :[^/@[:space:]]+$ ]] || { echo "IMAGE_REF must include a tag and must not be a digest reference" >&2; exit 2; }
+image_tag="${IMAGE_REF##*:}"
+[[ "$image_tag" == "$release_tag" ]] || {
+  echo "IMAGE_REF tag must exactly match release version: expected $release_tag, got $image_tag" >&2
+  exit 2
+}
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
@@ -35,6 +41,10 @@ cd "$root"
   exit 2
 }
 commit="$(git rev-parse --verify HEAD)"
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "Source commit is not a full Git SHA: $commit" >&2
+  exit 2
+}
 build_date="$(git show -s --format=%cI HEAD)"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
@@ -70,6 +80,8 @@ index_digest="$(tr -d '\r\n' < "$attestation_dir/oci-index-digest.txt")"
 }
 immutable_ref="${IMAGE_REF}@${index_digest}"
 printf '%s\n' "$immutable_ref" > "$out/driver-image-ref.txt"
+printf '%s\n' "$release_tag" > "$out/release-tag.txt"
+printf '%s\n' "$commit" > "$out/source-commit.txt"
 
 # Record Buildx's own result digest as independent build evidence. It may refer
 # to the exporter result while the release reference deliberately pins the OCI
@@ -92,6 +104,7 @@ cat > "$out/source-provenance.json" <<EOF
   "source_repository": "adaptgurus/storage-provider-opennebula",
   "source_commit": "$commit",
   "version": "$version",
+  "release_tag": "$release_tag",
   "build_date": "$build_date",
   "go_image": "$GO_IMAGE",
   "runtime_image": "$RUNTIME_IMAGE",
@@ -113,6 +126,8 @@ EOF
     build-metadata.json \
     buildx-result-digest.txt \
     driver-image-ref.txt \
+    release-tag.txt \
+    source-commit.txt \
     layersentry-csi.oci.tar \
     layersentry-csi.oci.tar.sha256 \
     source-provenance.json \
@@ -124,5 +139,6 @@ EOF
 )
 
 printf 'Built LayerSentry CSI %s from %s with verified SBOM/provenance attestations.\n' "$version" "$commit"
+printf 'Expected Git release tag: %s\n' "$release_tag"
 printf 'Immutable release image reference: %s\n' "$immutable_ref"
 printf 'Live storage qualification is still required before production use.\n'
