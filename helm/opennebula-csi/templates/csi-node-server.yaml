@@ -1,4 +1,5 @@
 {{- include "opennebula-csi.validateDriverIdentityArgs" . -}}
+{{- $driverName := include "opennebula-csi.driverName" . -}}
 ---
 kind: DaemonSet
 apiVersion: apps/v1
@@ -64,7 +65,7 @@ spec:
           {{- end }}
           args:
             - "--endpoint=$(CSI_ENDPOINT)"
-            - "--drivername={{ include \"opennebula-csi.driverName\" . }}"
+            - "--drivername={{ $driverName }}"
             - "--nodeid=$(NODE_ID)"
             - "--v={{ .Values.driver.logLevel }}"
             - "--vmodule=leaderelection=0"
