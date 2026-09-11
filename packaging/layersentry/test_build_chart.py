@@ -28,8 +28,13 @@ class PackagingTests(unittest.TestCase):
                 '{{- define "opennebula-csi.driverName" -}}\n'
                 f'{{{{- default "{LEGACY}" .Values.driver.name -}}}}\n'
                 "{{- end -}}\n"
+                '{{- define "opennebula-csi.validateLayerSentryProfile" -}}\n'
+                "{{- end -}}\n"
             ),
-            "csi-driver.yaml": 'name: {{ include "opennebula-csi.driverName" . }}\n',
+            "csi-driver.yaml": (
+                '{{ include "opennebula-csi.validateLayerSentryProfile" . }}\n'
+                'name: {{ include "opennebula-csi.driverName" . }}\n'
+            ),
             "csi-storageclass.yaml": 'provisioner: {{ include "opennebula-csi.driverName" $root }}\n',
             "csi-snapshotclass.yaml": 'driver: {{ include "opennebula-csi.driverName" $root }}\n',
             "csi-controller-server.yaml": driver_binding,
@@ -72,6 +77,15 @@ class PackagingTests(unittest.TestCase):
     def test_missing_identity_surface_rejected(self):
         data = self.identity_fixture()
         del data["csi-node-server.yaml"]
+        with self.assertRaises(ValueError):
+            validate_identity_source(data)
+
+    def test_missing_layersentry_profile_validator_rejected(self):
+        data = self.identity_fixture()
+        data["_identity.tpl"] = data["_identity.tpl"].replace(
+            '{{- define "opennebula-csi.validateLayerSentryProfile" -}}\n{{- end -}}\n',
+            "",
+        )
         with self.assertRaises(ValueError):
             validate_identity_source(data)
 
