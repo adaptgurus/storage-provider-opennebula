@@ -2,6 +2,9 @@
   "schema_version": 1,
   "product": "LayerSentry CSI",
   "target": {
+    "release_version": "0.5.15-layersentry.1",
+    "release_tag": "v0.5.15-layersentry.1",
+    "source_commit": null,
     "kubernetes": "1.36.4",
     "rke2": "v1.36.4+rke2r1",
     "rke2_commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
@@ -41,6 +44,8 @@
     "driver_image_digest": null,
     "sbom": null,
     "provenance": null,
+    "source_provenance": null,
+    "artifact_checksums": null,
     "offline_image_manifest": null
   }
 }
