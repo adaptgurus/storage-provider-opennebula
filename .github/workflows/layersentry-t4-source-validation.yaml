@@ -62,12 +62,12 @@ jobs:
                   "kubeletRootDir": "/var/lib/kubelet",
               },
               "images": {
-                  "driver": f"ghcr.io/adaptgurus/layersentry-csi:v0.5.15-ls.1@sha256:{digest}",
-                  "provisioner": f"registry.k8s.io/sig-storage/csi-provisioner:v5.3.0@sha256:{digest}",
-                  "attacher": f"registry.k8s.io/sig-storage/csi-attacher:v4.9.0@sha256:{digest}",
-                  "resizer": f"registry.k8s.io/sig-storage/csi-resizer:v1.13.2@sha256:{digest}",
-                  "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0@sha256:{digest}",
-                  "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.16.0@sha256:{digest}",
+                  "driver": f"ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1@sha256:{digest}",
+                  "provisioner": f"registry.k8s.io/sig-storage/csi-provisioner:v6.3.0@sha256:{digest}",
+                  "attacher": f"registry.k8s.io/sig-storage/csi-attacher:v4.13.0@sha256:{digest}",
+                  "resizer": f"registry.k8s.io/sig-storage/csi-resizer:v2.2.1@sha256:{digest}",
+                  "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0@sha256:{digest}",
+                  "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.20.0@sha256:{digest}",
               },
               "capabilities": {"expansion": False, "snapshots": False, "clones": False},
           }
@@ -90,6 +90,11 @@ jobs:
           grep -q 'provisioner: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q -- '--drivername=csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
           grep -q '/plugins/csi.layersentry.io/csi.sock' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-provisioner:v6.3.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-attacher:v4.13.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-resizer:v2.2.1@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-node-driver-registrar:v2.18.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
 
       - name: Reject duplicate drivername source
