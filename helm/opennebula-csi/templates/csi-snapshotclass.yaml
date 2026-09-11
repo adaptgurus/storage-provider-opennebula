@@ -1,0 +1,33 @@
+{{- $root := . -}}
+{{- $classes := (get .Values "snapshotClasses") | default list -}}
+{{- if gt (len $classes) 0 -}}
+  {{- $snapshotter := (get .Values "snapshotter") | default dict -}}
+  {{- $featureGates := (get .Values "featureGates") | default dict -}}
+  {{- if not ((get $snapshotter "enabled") | default false) -}}
+    {{- fail "snapshotClasses require snapshotter.enabled=true" -}}
+  {{- end -}}
+  {{- if not ((get $featureGates "cephfsSnapshots") | default false) -}}
+    {{- fail "snapshotClasses require featureGates.cephfsSnapshots=true; do not advertise unimplemented snapshots" -}}
+  {{- end -}}
+{{- end -}}
+{{- range $class := $classes }}
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ required "snapshotClasses[].name is required" $class.name }}
+  {{- with $class.annotations }}
+  annotations:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $class.labels }}
+  labels:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
+driver: {{ include "opennebula-csi.driverName" $root }}
+deletionPolicy: {{ default "Delete" $class.deletionPolicy }}
+{{- with $class.parameters }}
+parameters:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

@@ -25,6 +25,10 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// Kept true for the upstream-compatible build. The LayerSentry release build
+// sets this false until a named backend profile passes expansion qualification.
+var pluginVolumeExpansionAdvertised = true
+
 type IdentityServer struct {
 	Driver *Driver
 	csi.UnimplementedIdentityServer
@@ -82,13 +86,15 @@ func (is *IdentityServer) GetPluginCapabilities(ctx context.Context, req *csi.Ge
 				},
 			},
 		},
-		{
+	}
+	if pluginVolumeExpansionAdvertised {
+		capabilities = append(capabilities, &csi.PluginCapability{
 			Type: &csi.PluginCapability_VolumeExpansion_{
 				VolumeExpansion: &csi.PluginCapability_VolumeExpansion{
 					Type: csi.PluginCapability_VolumeExpansion_ONLINE,
 				},
 			},
-		},
+		})
 	}
 
 	if is.Driver.featureGates.TopologyAccessibility {

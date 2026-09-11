@@ -1,0 +1,110 @@
+---
+name: LayerSentry T4 Source Validation
+
+on:
+  pull_request:
+    paths:
+      - "cmd/opennebula-csi/**"
+      - "pkg/csi/**"
+      - "helm/opennebula-csi/**"
+      - "packaging/layersentry/**"
+      - ".github/workflows/layersentry-t4-source-validation.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  source-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Go test
+        run: go test ./...
+
+      - name: LayerSentry tagged build and focused tests
+        run: |
+          go build -trimpath -tags layersentry ./cmd/opennebula-csi
+          go test -tags layersentry ./cmd/opennebula-csi ./pkg/csi/driver
+
+      - name: Packaging unit tests
+        working-directory: packaging/layersentry
+        run: python3 -m unittest -v test_build_chart.py
+
+      - name: Render legacy chart default
+        run: |
+          helm lint helm/opennebula-csi --set-string credentials.inlineAuth=ci:placeholder
+          helm template legacy helm/opennebula-csi \
+            --set-string credentials.inlineAuth=ci:placeholder > "${RUNNER_TEMP}/legacy.yaml"
+          grep -q 'name: csi.opennebula.io' "${RUNNER_TEMP}/legacy.yaml"
+          grep -q '/plugins/csi.opennebula.io/csi.sock' "${RUNNER_TEMP}/legacy.yaml"
+
+      - name: Build digest-locked LayerSentry candidate and render identity
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          digest = "a" * 64
+          lock = {
+              "rke2": {
+                  "version": "v1.36.4+rke2r1",
+                  "commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
+                  "kubeletRootDir": "/var/lib/kubelet",
+              },
+              "images": {
+                  "driver": f"ghcr.io/adaptgurus/layersentry-csi:v0.5.15-layersentry.1@sha256:{digest}",
+                  "provisioner": f"registry.k8s.io/sig-storage/csi-provisioner:v6.3.0@sha256:{digest}",
+                  "attacher": f"registry.k8s.io/sig-storage/csi-attacher:v4.13.0@sha256:{digest}",
+                  "resizer": f"registry.k8s.io/sig-storage/csi-resizer:v2.2.1@sha256:{digest}",
+                  "nodeDriverRegistrar": f"registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0@sha256:{digest}",
+                  "livenessProbe": f"registry.k8s.io/sig-storage/livenessprobe:v2.20.0@sha256:{digest}",
+              },
+              "capabilities": {"expansion": False, "snapshots": False, "clones": False},
+          }
+          root = Path(os.environ["RUNNER_TEMP"])
+          (root / "release-lock.json").write_text(json.dumps(lock))
+          (root / "site-values.yaml").write_text("""storageClasses:\n  - name: layersentry-test\n    allowVolumeExpansion: false\n""")
+          PY
+          python3 packaging/layersentry/build_chart.py \
+            --release-lock "${RUNNER_TEMP}/release-lock.json" \
+            --output "${RUNNER_TEMP}/layersentry-csi"
+          helm lint "${RUNNER_TEMP}/layersentry-csi" \
+            -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
+            -f "${RUNNER_TEMP}/site-values.yaml" \
+            --set-string credentials.inlineAuth=ci:placeholder
+          helm template layersentry "${RUNNER_TEMP}/layersentry-csi" \
+            -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
+            -f "${RUNNER_TEMP}/site-values.yaml" \
+            --set-string credentials.inlineAuth=ci:placeholder > "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'name: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'provisioner: csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q -- '--drivername=csi.layersentry.io' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q '/plugins/csi.layersentry.io/csi.sock' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-provisioner:v6.3.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-attacher:v4.13.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-resizer:v2.2.1@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'csi-node-driver-registrar:v2.18.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -q 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
+
+      - name: Reject duplicate drivername source
+        run: |
+          set +e
+          helm template invalid helm/opennebula-csi \
+            --set-string credentials.inlineAuth=ci:placeholder \
+            --set driver.name=csi.layersentry.io \
+            --set 'driver.extraArgs[0]=--drivername=csi.other.example' > /tmp/invalid.out 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'driver.extraArgs must not set --drivername' /tmp/invalid.out

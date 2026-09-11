@@ -13,10 +13,21 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY pkg/ pkg/
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags layersentry \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=readonly -trimpath -tags layersentry \
     -ldflags "-X github.com/OpenNebula/storage-provider-opennebula/pkg/csi/driver.driverVersion=${VERSION} -X github.com/OpenNebula/storage-provider-opennebula/pkg/csi/driver.driverCommit=${COMMIT} -X github.com/OpenNebula/storage-provider-opennebula/pkg/csi/driver.driverBuildDate=${BUILD_DATE}" \
     -o /out/layersentry-csi ./cmd/opennebula-csi
+
 FROM ${RUNTIME_IMAGE}
+ARG VERSION=0.1.0-dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.title="LayerSentry CSI" \
+      org.opencontainers.image.description="LayerSentry-qualified candidate using the OpenNebula CSI engine" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/adaptgurus/storage-provider-opennebula" \
+      org.opencontainers.image.licenses="Apache-2.0"
 # RUNTIME_IMAGE must be the qualified Alpine-based CSI runtime with these tools,
 # assembled/scanned/pinned separately: ceph-common, ceph-fuse, ext4/xfs utilities,
 # util-linux and udev. This file deliberately does not install moving packages.

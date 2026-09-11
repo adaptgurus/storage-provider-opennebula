@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "product": "LayerSentry CSI",
+  "target": {
+    "kubernetes": "1.36",
+    "rke2": "v1.36.4+rke2r1",
+    "rke2_commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
+    "driver_identity": "csi.layersentry.io"
+  },
+  "selected_storage_profile": null,
+  "overall_status": "NOT_QUALIFIED",
+  "qualification_rule": "Do not set QUALIFIED until a named backend profile passes data survival and recovery, including worker replacement with identical data.",
+  "tests": [
+    {"id": "install", "status": "NOT_RUN", "evidence": []},
+    {"id": "discovery", "status": "NOT_RUN", "evidence": []},
+    {"id": "storageclass", "status": "SOURCE_RENDER_GATE_ADDED", "evidence": []},
+    {"id": "pvc_create", "status": "NOT_RUN", "evidence": []},
+    {"id": "pv_bind", "status": "NOT_RUN", "evidence": []},
+    {"id": "pod_mount", "status": "NOT_RUN", "evidence": []},
+    {"id": "write_recognizable_data", "status": "NOT_RUN", "evidence": []},
+    {"id": "pod_restart", "status": "NOT_RUN", "evidence": []},
+    {"id": "node_restart", "status": "NOT_RUN", "evidence": []},
+    {"id": "controller_restart", "status": "NOT_RUN", "evidence": []},
+    {"id": "detach", "status": "NOT_RUN", "evidence": []},
+    {"id": "attach", "status": "NOT_RUN", "evidence": []},
+    {"id": "worker_replacement", "status": "NOT_RUN", "evidence": []},
+    {"id": "same_data_after_replacement", "status": "NOT_RUN", "evidence": []},
+    {"id": "volume_expansion", "status": "NOT_OFFERED_END_TO_END", "evidence": [], "note": "NodeExpandVolume is implemented and remains truthfully advertised by the node service, but the LayerSentry plugin/controller suppress online/controller expansion and no release StorageClass enables expansion until a named backend passes expansion and recovery qualification."},
+    {"id": "snapshot", "status": "NOT_ADVERTISED_BY_LAYERSENTRY_CONTROLLER", "evidence": [], "note": "Underlying CephFS path remains feature-gated and unqualified."},
+    {"id": "clone", "status": "NOT_ADVERTISED_BY_LAYERSENTRY_CONTROLLER", "evidence": [], "note": "Underlying CephFS path remains feature-gated and unqualified."},
+    {"id": "snapshot_restore", "status": "NOT_OFFERED", "evidence": []},
+    {"id": "delete", "status": "NOT_RUN", "evidence": []},
+    {"id": "idempotent_retry", "status": "NOT_RUN", "evidence": []},
+    {"id": "duplicate_operations", "status": "NOT_RUN", "evidence": []},
+    {"id": "unknown_reconciliation", "status": "SOURCE_IDENTITY_ISOLATION_TEST_ADDED", "evidence": [], "note": "Live ambiguous-outcome/reconciliation tests are still required."},
+    {"id": "tenant_isolation", "status": "NOT_RUN", "evidence": []},
+    {"id": "foreign_csi_isolation", "status": "SOURCE_NEGATIVE_TEST_ADDED", "evidence": []}
+  ],
+  "release_artifacts": {
+    "driver_image_digest": null,
+    "sbom": null,
+    "provenance": null,
+    "offline_image_manifest": null
+  }
+}

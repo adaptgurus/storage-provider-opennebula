@@ -1,3 +1,5 @@
+{{- include "opennebula-csi.validateDriverIdentityArgs" . -}}
+{{- $driverName := include "opennebula-csi.driverName" . -}}
 ---
 {{- $controller := (get .Values "controller") | default dict -}}
 {{- $controllerLeaderElection := (get $controller "leaderElection") | default dict -}}
@@ -83,6 +85,7 @@ spec:
           {{- end }}
           args:
             - "--endpoint=$(CSI_ENDPOINT)"
+            - "--drivername={{ $driverName }}"
             - "--v={{ $controllerLogLevel }}"
             - "--vmodule=leaderelection=0"
             {{- with .Values.driver.extraArgs }}
@@ -123,7 +126,7 @@ spec:
               readOnly: true
             {{- end }}
         - name: csi-provisioner
-          image: registry.k8s.io/sig-storage/csi-provisioner:v5.3.0
+          image: {{ include "opennebula-csi.sidecarImage" (dict "context" . "name" "provisioner" "default" "registry.k8s.io/sig-storage/csi-provisioner:v5.3.0") | quote }}
           imagePullPolicy: IfNotPresent
           {{- if .Values.metrics.enabled }}
           ports:
@@ -149,7 +152,7 @@ spec:
             - name: csi-socket-dir
               mountPath: /csi
         - name: csi-attacher
-          image: registry.k8s.io/sig-storage/csi-attacher:v4.9.0
+          image: {{ include "opennebula-csi.sidecarImage" (dict "context" . "name" "attacher" "default" "registry.k8s.io/sig-storage/csi-attacher:v4.9.0") | quote }}
           imagePullPolicy: IfNotPresent
           {{- if .Values.metrics.enabled }}
           ports:
@@ -173,7 +176,7 @@ spec:
             - name: csi-socket-dir
               mountPath: /csi
         - name: csi-resizer
-          image: registry.k8s.io/sig-storage/csi-resizer:v1.13.2
+          image: {{ include "opennebula-csi.sidecarImage" (dict "context" . "name" "resizer" "default" "registry.k8s.io/sig-storage/csi-resizer:v1.13.2") | quote }}
           imagePullPolicy: IfNotPresent
           {{- if .Values.metrics.enabled }}
           ports:
@@ -217,7 +220,7 @@ spec:
         {{- end }}
         - name: liveness-probe
           imagePullPolicy: IfNotPresent
-          image: registry.k8s.io/sig-storage/livenessprobe:v2.16.0
+          image: {{ include "opennebula-csi.sidecarImage" (dict "context" . "name" "livenessProbe" "default" "registry.k8s.io/sig-storage/livenessprobe:v2.16.0") | quote }}
           args:
             - --csi-address=/csi/csi.sock
             - --probe-timeout=3s

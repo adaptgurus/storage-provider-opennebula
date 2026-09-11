@@ -81,6 +81,10 @@ func (r *AttachmentReconciler) ReconcileOnce(ctx context.Context) error {
 	if client == nil {
 		return nil
 	}
+	driverName := strings.TrimSpace(r.server.driver.name)
+	if driverName == "" {
+		return fmt.Errorf("attachment reconciler requires a non-empty CSI driver identity")
+	}
 
 	attachments, err := r.server.volumeProvider.ListCurrentAttachments(ctx)
 	if err != nil {
@@ -103,10 +107,11 @@ func (r *AttachmentReconciler) ReconcileOnce(ctx context.Context) error {
 	pvByHandle := make(map[string]*corev1.PersistentVolume, len(pvList.Items))
 	for idx := range pvList.Items {
 		pv := &pvList.Items[idx]
-		pvByName[pv.Name] = pv
-		if pv.Spec.CSI != nil {
-			pvByHandle[pv.Spec.CSI.VolumeHandle] = pv
+		if pv.Spec.CSI == nil || strings.TrimSpace(pv.Spec.CSI.Driver) != driverName {
+			continue
 		}
+		pvByName[pv.Name] = pv
+		pvByHandle[pv.Spec.CSI.VolumeHandle] = pv
 	}
 
 	activePVCUsers := make(map[string]bool)
@@ -132,7 +137,7 @@ func (r *AttachmentReconciler) ReconcileOnce(ctx context.Context) error {
 
 	vaByVolume := make(map[string][]storagev1.VolumeAttachment)
 	for _, va := range vaList.Items {
-		if va.Spec.Source.PersistentVolumeName == nil {
+		if strings.TrimSpace(va.Spec.Attacher) != driverName || va.Spec.Source.PersistentVolumeName == nil {
 			continue
 		}
 		pv := pvByName[*va.Spec.Source.PersistentVolumeName]
@@ -147,7 +152,6 @@ func (r *AttachmentReconciler) ReconcileOnce(ctx context.Context) error {
 	currentStaleVAs := map[string]struct{}{}
 	currentDivergent := map[string]struct{}{}
 	currentMultiAttach := map[string]struct{}{}
-
 	for volumeHandle, observed := range attachmentsByVolume {
 		pv := pvByHandle[volumeHandle]
 		if pv == nil || pv.Spec.CSI == nil {
@@ -212,7 +216,7 @@ func (r *AttachmentReconciler) ReconcileOnce(ctx context.Context) error {
 
 	for idx := range vaList.Items {
 		va := &vaList.Items[idx]
-		if va.Spec.Source.PersistentVolumeName == nil || !va.Status.Attached {
+		if strings.TrimSpace(va.Spec.Attacher) != driverName || va.Spec.Source.PersistentVolumeName == nil || !va.Status.Attached {
 			continue
 		}
 		pv := pvByName[*va.Spec.Source.PersistentVolumeName]

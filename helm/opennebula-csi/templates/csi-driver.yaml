@@ -1,10 +1,10 @@
-
+{{- include "opennebula-csi.validateDriverIdentityArgs" . -}}
 # Spec: https://kubernetes-csi.github.io/docs/csi-driver-object.html#what-fields-does-the-csidriver-object-have
 ---
 apiVersion: storage.k8s.io/v1
 kind: CSIDriver
 metadata:
-  name: csi.opennebula.io
+  name: {{ include "opennebula-csi.driverName" . }}
 spec:
   attachRequired: true
   podInfoOnMount: true
