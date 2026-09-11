@@ -1,5 +1,6 @@
 {{- include "opennebula-csi.validateDriverIdentityArgs" . -}}
 {{- $driverName := include "opennebula-csi.driverName" . -}}
+{{- $layersentryHealth := eq $driverName "csi.layersentry.io" -}}
 ---
 kind: DaemonSet
 apiVersion: apps/v1
@@ -96,6 +97,24 @@ spec:
               add:
                 - SYS_ADMIN
             allowPrivilegeEscalation: true
+          {{- if $layersentryHealth }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9808
+            initialDelaySeconds: 20
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9808
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          {{- end }}
           volumeMounts:
             - name: csi-socket-dir
               mountPath: /csi
