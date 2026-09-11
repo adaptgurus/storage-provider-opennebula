@@ -19,15 +19,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: Azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Go test upstream-compatible profile
         run: go test ./...
@@ -55,6 +55,7 @@ jobs:
           python3 packaging/layersentry/validate_qualification.py \
             --matrix packaging/layersentry/qualification-matrix.json \
             --release-lock packaging/layersentry/release-lock.template.json \
+            --evidence-root . \
             > "${RUNNER_TEMP}/qualification-gate.out" 2>&1
           rc=$?
           set -e
@@ -78,8 +79,8 @@ jobs:
           digest = "a" * 64
           lock = {
               "rke2": {
-                  "version": "v1.36.3+rke2r1",
-                  "commit": "c4f306e6c5fa18dfb447bf6b8a0423f2da68c939",
+                  "version": "v1.36.4+rke2r1",
+                  "commit": "7479a59cdd2c8ce0b8871699a24daa4b7c28cc64",
                   "kubeletRootDir": "/var/lib/kubelet",
               },
               "images": {
