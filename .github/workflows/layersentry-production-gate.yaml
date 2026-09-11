@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact release source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Require frozen production release lock
         run: |
@@ -29,7 +29,8 @@ jobs:
         run: |
           python3 packaging/layersentry/validate_qualification.py \
             --matrix packaging/layersentry/qualification-matrix.json \
-            --release-lock packaging/layersentry/release-lock.json
+            --release-lock packaging/layersentry/release-lock.json \
+            --evidence-root .
 
       - name: Confirm immutable offline image manifest
         run: |
