@@ -10,8 +10,9 @@ Usage:
   IMAGE_REF=<registry/repo:tag> \
   packaging/layersentry/build_release.sh <version> <output-dir>
 
-Builds a LayerSentry CSI OCI image with BuildKit SBOM and SLSA provenance
-attestations. The output is a local OCI archive; this script does not push.
+Builds a LayerSentry CSI OCI image, requires embedded SPDX SBOM and max-mode
+SLSA provenance attestations, and emits an immutable image reference plus
+checksummed release evidence. The script does not push the image.
 EOF
   exit 2
 }
@@ -39,8 +40,11 @@ mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 metadata_file="$out/build-metadata.json"
 oci_archive="$out/layersentry-csi.oci.tar"
+attestation_dir="$out/attestations"
 
-DOCKER_BUILDKIT=1 docker buildx build \
+# Keep full build-record provenance in the metadata file in addition to the
+# OCI SLSA attestation attached to the image index.
+BUILDX_METADATA_PROVENANCE=max DOCKER_BUILDKIT=1 docker buildx build \
   --file packaging/layersentry/Dockerfile \
   --platform linux/amd64 \
   --build-arg "GO_IMAGE=$GO_IMAGE" \
@@ -55,6 +59,33 @@ DOCKER_BUILDKIT=1 docker buildx build \
   --output "type=oci,dest=$oci_archive" \
   .
 
+python3 packaging/layersentry/verify_oci_attestations.py \
+  --oci-archive "$oci_archive" \
+  --output-dir "$attestation_dir"
+
+index_digest="$(tr -d '\r\n' < "$attestation_dir/oci-index-digest.txt")"
+[[ "$index_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "Verified OCI index digest is malformed: $index_digest" >&2
+  exit 2
+}
+immutable_ref="${IMAGE_REF}@${index_digest}"
+printf '%s\n' "$immutable_ref" > "$out/driver-image-ref.txt"
+
+# Record Buildx's own result digest as independent build evidence. It may refer
+# to the exporter result while the release reference deliberately pins the OCI
+# index verified above, which is the object that carries the attestations.
+metadata_digest="$(python3 - "$metadata_file" <<'PY'
+import json, re, sys
+from pathlib import Path
+metadata = json.loads(Path(sys.argv[1]).read_text())
+value = str(metadata.get("containerimage.digest") or "")
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+    raise SystemExit("build-metadata.json is missing a valid containerimage.digest")
+print(value)
+PY
+)"
+printf '%s\n' "$metadata_digest" > "$out/buildx-result-digest.txt"
+
 sha256sum "$oci_archive" > "$out/layersentry-csi.oci.tar.sha256"
 cat > "$out/source-provenance.json" <<EOF
 {
@@ -65,13 +96,33 @@ cat > "$out/source-provenance.json" <<EOF
   "go_image": "$GO_IMAGE",
   "runtime_image": "$RUNTIME_IMAGE",
   "image_tag": "$IMAGE_REF",
+  "immutable_image_ref": "$immutable_ref",
+  "buildx_result_digest": "$metadata_digest",
+  "oci_index_digest": "$index_digest",
   "oci_archive_sha256_file": "layersentry-csi.oci.tar.sha256",
   "buildkit_metadata": "build-metadata.json",
-  "sbom_attestation": "embedded in OCI image index by buildx --sbom=true",
-  "provenance_attestation": "embedded in OCI image index by buildx --provenance=mode=max",
+  "sbom_evidence": "attestations/sbom-attestations.json",
+  "provenance_evidence": "attestations/provenance-attestations.json",
   "production_qualified": false
 }
 EOF
 
-printf 'Built LayerSentry CSI %s from %s with SBOM/provenance attestations.\n' "$version" "$commit"
+(
+  cd "$out"
+  sha256sum \
+    build-metadata.json \
+    buildx-result-digest.txt \
+    driver-image-ref.txt \
+    layersentry-csi.oci.tar \
+    layersentry-csi.oci.tar.sha256 \
+    source-provenance.json \
+    attestations/oci-index-digest.txt \
+    attestations/image-manifest-digest.txt \
+    attestations/sbom-attestations.json \
+    attestations/provenance-attestations.json \
+    > release-artifacts.sha256
+)
+
+printf 'Built LayerSentry CSI %s from %s with verified SBOM/provenance attestations.\n' "$version" "$commit"
+printf 'Immutable release image reference: %s\n' "$immutable_ref"
 printf 'Live storage qualification is still required before production use.\n'
