@@ -29,13 +29,21 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Go test
+      - name: Go test upstream-compatible profile
         run: go test ./...
 
-      - name: LayerSentry tagged build and focused tests
+      - name: LayerSentry tagged build and focused profile tests
         run: |
           go build -trimpath -tags layersentry ./cmd/opennebula-csi
-          go test -tags layersentry ./cmd/opennebula-csi ./pkg/csi/driver
+          go test -tags layersentry ./cmd/opennebula-csi
+          # The inherited untagged driver suite intentionally asserts the
+          # upstream capability surface (clone + online expansion). The
+          # LayerSentry build deliberately suppresses those RPC capabilities
+          # until backend qualification, so run the dedicated LayerSentry
+          # profile/reconciliation tests under the tag instead of asking the
+          # mutually-exclusive upstream assertions to pass in this profile.
+          go test -tags layersentry ./pkg/csi/driver \
+            -run '^(TestLayerSentry|TestAttachmentReconciler)'
 
       - name: Packaging unit tests
         working-directory: packaging/layersentry
