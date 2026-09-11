@@ -17,6 +17,10 @@ from build_chart import (
 
 class PackagingTests(unittest.TestCase):
     def identity_fixture(self):
+        driver_binding = (
+            '{{- $driverName := include "opennebula-csi.driverName" . -}}\n'
+            '- "--drivername={{ $driverName }}"\n'
+        )
         return {
             "_identity.tpl": (
                 '{{- define "opennebula-csi.driverName" -}}\n'
@@ -25,13 +29,12 @@ class PackagingTests(unittest.TestCase):
             ),
             "csi-driver.yaml": 'name: {{ include "opennebula-csi.driverName" . }}\n',
             "csi-storageclass.yaml": 'provisioner: {{ include "opennebula-csi.driverName" $root }}\n',
-            "csi-controller-server.yaml": (
-                '- "--drivername={{ include \\"opennebula-csi.driverName\\" . }}"\n'
-            ),
+            "csi-snapshotclass.yaml": 'driver: {{ include "opennebula-csi.driverName" $root }}\n',
+            "csi-controller-server.yaml": driver_binding,
             "csi-node-server.yaml": (
-                '- "--drivername={{ include \\"opennebula-csi.driverName\\" . }}"\n'
-                'path: {{ include "opennebula-csi.kubeletPluginDir" . }}\n'
-                'path: {{ include "opennebula-csi.kubeletRegistrationDir" . }}\n'
+                driver_binding
+                + 'path: {{ include "opennebula-csi.kubeletPluginDir" . }}\n'
+                + 'path: {{ include "opennebula-csi.kubeletRegistrationDir" . }}\n'
             ),
         }
 
@@ -80,6 +83,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(profile["driver"], {"name": LAYERSENTRY})
         self.assertEqual(profile["kubelet"]["rootDir"], "/var/lib/kubelet")
         self.assertFalse(profile["snapshotter"]["enabled"])
+        self.assertEqual(profile["snapshotClasses"], [])
         self.assertEqual(profile["storageClasses"], [])
         self.assertNotIn("extraArgs", profile["driver"])
 
