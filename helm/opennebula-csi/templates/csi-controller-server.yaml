@@ -1,5 +1,6 @@
 {{- include "opennebula-csi.validateDriverIdentityArgs" . -}}
 {{- $driverName := include "opennebula-csi.driverName" . -}}
+{{- $layersentryHealth := eq $driverName "csi.layersentry.io" -}}
 ---
 {{- $controller := (get .Values "controller") | default dict -}}
 {{- $controllerLeaderElection := (get $controller "leaderElection") | default dict -}}
@@ -121,6 +122,24 @@ spec:
           {{- with .Values.controller.resources }}
           resources:
 {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $layersentryHealth }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9808
+            initialDelaySeconds: 20
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9808
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           {{- end }}
           volumeMounts:
             - name: csi-socket-dir
