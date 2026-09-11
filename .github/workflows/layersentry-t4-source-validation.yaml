@@ -42,15 +42,11 @@ jobs:
       - name: Packaging and promotion-gate unit tests
         working-directory: packaging/layersentry
         run: |
-          python3 -m unittest -v \
-            test_build_chart.py \
-            test_validate_qualification.py \
-            test_validate_storage_profile.py \
-            test_verify_oci_attestations.py \
-            test_live_qualification.py
+          python3 -m unittest discover -p 'test_*.py' -v
           bash -n build_release.sh
           python3 -m py_compile \
             build_chart.py \
+            emit_offline_manifest.py \
             validate_qualification.py \
             validate_storage_profile.py \
             verify_oci_attestations.py \
@@ -118,6 +114,9 @@ jobs:
           python3 packaging/layersentry/build_chart.py \
             --release-lock "${RUNNER_TEMP}/release-lock.json" \
             --output "${RUNNER_TEMP}/layersentry-csi"
+          python3 packaging/layersentry/emit_offline_manifest.py \
+            --release-lock "${RUNNER_TEMP}/release-lock.json" \
+            --output "${RUNNER_TEMP}/offline-images.txt"
           helm lint "${RUNNER_TEMP}/layersentry-csi" \
             -f "${RUNNER_TEMP}/layersentry-csi/layersentry-values.json" \
             -f "${RUNNER_TEMP}/site-values.yaml" \
@@ -136,6 +135,8 @@ jobs:
           grep -q 'livenessprobe:v2.20.0@sha256:' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'name: csi-resizer' "${RUNNER_TEMP}/layersentry.yaml"
           ! grep -q 'csi-resizer:' "${RUNNER_TEMP}/layersentry.yaml"
+          ! grep -q 'csi-resizer' "${RUNNER_TEMP}/offline-images.txt"
+          ! grep -q 'csi-snapshotter' "${RUNNER_TEMP}/offline-images.txt"
           ! grep -q 'csi.opennebula.io' "${RUNNER_TEMP}/layersentry.yaml"
 
       - name: Reject unsafe LayerSentry site overrides
