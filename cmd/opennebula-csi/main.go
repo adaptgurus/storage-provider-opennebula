@@ -63,10 +63,9 @@ func main() {
 	ctrl.SetLogger(klog.Background())
 	flag.Parse()
 
-	// Only the CSI driver process registers a CSI identity. Operational
-	// subcommands (preflight, support-bundle, inventory, diagnostics) use the
-	// same image but do not register a driver and must remain usable without a
-	// synthetic identity flag.
+	// Only driver mode registers a CSI identity. The same image also provides
+	// preflight/inventory/support commands, which must not be forced to provide
+	// a synthetic CSI identity when no CSI endpoint is registered.
 	if *mode == "driver" {
 		if err := validateBuildDriverIdentity(*driverName); err != nil {
 			klog.Errorf("Invalid CSI identity for this build: %v", err)
@@ -143,17 +142,16 @@ func handle(cfg config.CSIPluginConfig) int {
 			ValidationEnabled: validationEnabled,
 			DefaultImage:      defaultImage,
 		}); err != nil {
-			klog.Errorf("Failed to run inventory controller: %v", err)
+			klog.Errorf("Inventory controller failed: %v", err)
 			return 1
 		}
 		return 0
 	case "inventory-validate":
-		accessModes := parsePersistentVolumeAccessModes(splitCSV(*inventoryValidateAccessModes))
 		if err := driver.RunInventoryValidateCommand(ctx, cfg, driver.InventoryValidateOptions{
 			DatastoreID:  *inventoryValidateDatastore,
 			StorageClass: *inventoryValidateSC,
 			Size:         *inventoryValidateSize,
-			AccessModes:  accessModes,
+			AccessModes:  parsePersistentVolumeAccessModes(splitCSV(*inventoryValidateAccessModes)),
 			FioArgs:      splitCSV(*inventoryValidateFioArgs),
 		}, os.Stdout); err != nil {
 			klog.Errorf("Inventory validation failed: %v", err)
@@ -180,34 +178,45 @@ func handle(cfg config.CSIPluginConfig) int {
 		if err := driver.RunHotplugDiagnoseCommand(ctx, cfg, driver.HotplugDiagnoseOptions{
 			Node: *hotplugDiagnoseNode,
 		}, os.Stdout); err != nil {
-			klog.Errorf("Hotplug diagnose failed: %v", err)
+			klog.Errorf("Hotplug diagnosis failed: %v", err)
 			return 1
 		}
 		return 0
 	default:
-		klog.Errorf("Unknown mode: %s", *mode)
+		klog.Errorf("Unsupported mode %q", *mode)
 		return 1
 	}
 }
 
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if value := strings.TrimSpace(part); value != "" {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
-func parsePersistentVolumeAccessModes(raw []string) []corev1.PersistentVolumeAccessMode {
-	if len(raw) == 0 {
+func splitCSV(value string) []string {
+	if value == "" {
 		return nil
 	}
-	result := make([]corev1.PersistentVolumeAccessMode, 0, len(raw))
-	for _, value := range raw {
-		result = append(result, corev1.PersistentVolumeAccessMode(value))
+
+	parts := strings.Split(value, ",")
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		normalized = append(normalized, trimmed)
 	}
-	return result
+
+	return normalized
+}
+
+func parsePersistentVolumeAccessModes(values []string) []corev1.PersistentVolumeAccessMode {
+	if len(values) == 0 {
+		return nil
+	}
+	modes := make([]corev1.PersistentVolumeAccessMode, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		modes = append(modes, corev1.PersistentVolumeAccessMode(trimmed))
+	}
+	return modes
 }
