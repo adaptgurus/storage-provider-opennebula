@@ -31,6 +31,10 @@ jobs:
             --matrix packaging/layersentry/qualification-matrix.json \
             --release-lock packaging/layersentry/release-lock.json \
             --evidence-root .
+          python3 packaging/layersentry/validate_storage_profile.py \
+            --matrix packaging/layersentry/qualification-matrix.json \
+            --release-lock packaging/layersentry/release-lock.json \
+            --evidence-root .
 
       - name: Confirm immutable offline image manifest
         run: |
