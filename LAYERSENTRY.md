@@ -6,9 +6,11 @@ This downstream lane preserves the existing OpenNebula CSI storage engine and qu
 
 ## Identity model
 
-The `layersentry` Go build tag keeps `csi.layersentry.io` as the LayerSentry binary default, but the Helm chart no longer relies on a binary-only rename. `driver.name` is the deployment identity source of truth. The chart default remains `csi.opennebula.io` for backward compatibility; the LayerSentry release profile sets `driver.name: csi.layersentry.io` and explicitly passes the same value to both controller and node processes.
+`driver.name` is the deployment identity source of truth. The chart default remains `csi.opennebula.io` for backward compatibility; the LayerSentry release profile sets `driver.name: csi.layersentry.io` and explicitly passes the same value to controller and node processes.
 
-The resolved identity is also used by `CSIDriver`, generated `StorageClass` and optional `VolumeSnapshotClass` objects, the kubelet CSI plugin directory and registrar socket. Attachment reconciliation filters both `PersistentVolume.spec.csi.driver` and `VolumeAttachment.spec.attacher` against the running driver identity before it can detach or delete anything. `driver.extraArgs` cannot set `--drivername`; Helm rendering fails if a second identity source is attempted.
+The `layersentry` Go build no longer silently changes the binary default. It instead fails startup unless the explicit driver flag equals `csi.layersentry.io`. This prevents an unmodified upstream chart from appearing to be a valid LayerSentry deployment and removes a hidden second identity default. The upstream-compatible build remains the deliberate legacy path for `csi.opennebula.io` PVs.
+
+The resolved identity is also used by `CSIDriver`, generated `StorageClass` and optional `VolumeSnapshotClass` objects, the kubelet CSI plugin directory and registrar socket. Attachment reconciliation filters both `PersistentVolume.spec.csi.driver` and `VolumeAttachment.spec.attacher` against the running driver identity before it can detach or delete anything. `driver.extraArgs` cannot set `--drivername`; Helm rendering fails if a second deployment identity source is attempted.
 
 See `packaging/layersentry/IDENTITY_AND_MIGRATION.md` for `CSINode` behavior and legacy-volume coexistence. Existing bound PVs are never rewritten to simulate migration.
 
@@ -25,11 +27,13 @@ These checks are identity-scoped. They do not change the legacy `csi.opennebula.
 
 ## RKE2 target and kubelet paths
 
-The current published stable 1.36 target is RKE2 `v1.36.3+rke2r1`, source commit `c4f306e6c5fa18dfb447bf6b8a0423f2da68c939`. The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile and re-run qualification.
+The current verified 1.36 target is official RKE2 `v1.36.4+rke2r1`, which packages Kubernetes `v1.36.4`. Its release tag resolves to commit `7479a59cdd2c8ce0b8871699a24daa4b7c28cc64`. No `v1.36.5+rke2r1` release was present when this target was revalidated on 11 September 2026.
+
+The profile records the kubelet root explicitly and defaults to `/var/lib/kubelet`; CSI plugin and `plugins_registry` host paths are derived from that one value. A site that overrides kubelet `--root-dir` must put the identical path in the CSI release lock/profile and re-run qualification.
 
 ## Kubernetes 1.36 sidecar release profile
 
-The upstream chart defaults remain unchanged for backward compatibility. The LayerSentry release lock instead requires the reviewed maintained sidecar tag lines for the Kubernetes 1.36 target:
+The upstream chart defaults remain unchanged for backward compatibility. The LayerSentry release lock requires these revalidated GA sidecar tag lines for the Kubernetes 1.36 target:
 
 - `registry.k8s.io/sig-storage/csi-provisioner:v6.3.0`
 - `registry.k8s.io/sig-storage/csi-attacher:v4.13.0`
@@ -69,9 +73,9 @@ The reviewed site values must reference a scoped pre-created provider credential
 
 ## LayerSentry-owned image SBOM and provenance
 
-`packaging/layersentry/build_release.sh` refuses a dirty worktree and requires digest-pinned builder/runtime images. It creates a local OCI image archive using `docker buildx` with `--sbom=true` and `--provenance=mode=max`, plus source metadata and archive SHA-256 evidence. Running the script produces build artifacts; merely having the script in source is not evidence that an SBOM/provenance artifact exists.
+`packaging/layersentry/build_release.sh` refuses a dirty worktree and requires digest-pinned builder/runtime images. It builds a local OCI image archive with BuildKit SBOM and max-mode provenance attestations. Release engineering must retain the actual immutable image digest and the materialized SBOM/provenance evidence produced from that OCI archive; descriptive claims are not accepted as evidence.
 
-The generic upstream `.github/workflows/release-csi.yaml` explicitly skips `*-layersentry.*` tags so it cannot publish a LayerSentry release through the upstream-compatible build path that disables default attestations.
+The generic upstream `.github/workflows/release-csi.yaml` explicitly skips `*-layersentry.*` tags so it cannot publish a LayerSentry release through the upstream-compatible build path.
 
 ## Production promotion gate
 
@@ -80,18 +84,20 @@ A production release must include `packaging/layersentry/release-lock.json` with
 ```bash
 python3 packaging/layersentry/validate_qualification.py \
   --matrix packaging/layersentry/qualification-matrix.json \
-  --release-lock packaging/layersentry/release-lock.json
+  --release-lock packaging/layersentry/release-lock.json \
+  --evidence-root .
 ```
 
 The validator rejects production promotion unless:
 
+- the target is exactly Kubernetes `1.36.4` / RKE2 `v1.36.4+rke2r1` at the verified tag commit;
 - `selected_storage_profile` names the exact backend tested;
-- the matrix and release lock agree on RKE2 version/commit and `csi.layersentry.io` identity;
 - every mandatory live lifecycle/recovery/isolation test is `PASS` and has evidence;
 - every advertised optional capability has matching `PASS` evidence;
 - unadvertised optional capabilities remain explicitly not offered;
 - the driver image in the matrix exactly matches the digest-pinned release lock;
-- SBOM, provenance and offline-manifest evidence are recorded.
+- SBOM, provenance and offline-manifest evidence are recorded;
+- every recorded evidence path is repository-relative, exists, and is nonempty in the checked-out release source.
 
 `.github/workflows/layersentry-production-gate.yaml` runs this validation for `v*-layersentry.*` tags. It does not deploy or publish anything by itself. The current repository intentionally has no production `release-lock.json`, so a production tag remains blocked until a real candidate image and live backend evidence exist.
 
@@ -107,6 +113,6 @@ Do not infer qualification of one datastore/backend from another. The selected p
 
 At minimum, a named backend profile must pass install, discovery, StorageClass, PVC create, PV bind, Pod mount, recognizable-data write, Pod restart, node restart, controller restart, detach/attach, worker replacement, identical data after replacement, delete, idempotent retry, duplicate operations, UNKNOWN reconciliation and tenant isolation. Expansion, snapshot, clone and snapshot restore are tested only after they are intentionally promoted for a backend; before that they remain unavailable to the LayerSentry release profile.
 
-The inherited `pkg/csi/test/e2e` suite remains useful upstream regression coverage, but it currently provisions its own Kubernetes `v1.31.4` CAPONE environment. It is not evidence for the T4 RKE2 1.36 production matrix. T4 qualification must execute against the named RKE2 1.36 cluster and selected backend.
+The inherited `pkg/csi/test/e2e` suite remains useful upstream regression coverage, but it currently provisions its own Kubernetes `v1.31.4` CAPONE environment. It is not evidence for the T4 RKE2 1.36.4 production matrix. T4 qualification must execute against the named RKE2 `v1.36.4+rke2r1` cluster and selected backend.
 
 Source/unit/render success never substitutes for the worker-replacement and data-survival gates. Stateful workloads remain `NOT_QUALIFIED` until the live matrix and evidence requirements are complete.
