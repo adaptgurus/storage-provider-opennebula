@@ -38,11 +38,11 @@ hard-coding either identity.
 {{- end -}}
 
 {{/*
-The current LayerSentry release profile has not qualified expansion, snapshots
-or clones. Site values must not be able to bypass that decision. LayerSentry
-also requires a pre-created/scoped Secret instead of embedding provider
-credentials in release values. These checks are identity-scoped so the legacy
-upstream-compatible chart behavior remains unchanged.
+The current LayerSentry release profile has not qualified expansion, snapshots,
+clones or a multi-controller topology. Site values must not be able to bypass
+those decisions. LayerSentry also requires a pre-created/scoped Secret instead
+of embedding provider credentials in release values. These checks are
+identity-scoped so legacy upstream-compatible behavior remains unchanged.
 */}}
 {{- define "opennebula-csi.validateLayerSentryProfile" -}}
 {{- $driverName := include "opennebula-csi.driverName" . -}}
@@ -60,6 +60,12 @@ upstream-compatible chart behavior remains unchanged.
   {{- end -}}
   {{- if eq $secretKey "" -}}
     {{- fail "LayerSentry CSI requires credentials.existingSecret.key" -}}
+  {{- end -}}
+
+  {{- $controller := (get .Values "controller") | default dict -}}
+  {{- $replicas := (get $controller "replicaCount") | default 1 -}}
+  {{- if ne (int $replicas) 1 -}}
+    {{- fail "LayerSentry CSI multi-controller topology is not qualified; controller.replicaCount must remain 1" -}}
   {{- end -}}
 
   {{- $resizer := (get .Values "resizer") | default dict -}}
