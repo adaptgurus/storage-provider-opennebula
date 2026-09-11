@@ -4,6 +4,7 @@ This document defines the **live** T4 qualification evidence. Source CI, Helm re
 
 ## Fixed target
 
+- LayerSentry release: `v0.5.15-layersentry.1`
 - RKE2: `v1.36.4+rke2r1`
 - Kubernetes: `v1.36.4`
 - RKE2 release-tag commit: `7479a59cdd2c8ce0b8871699a24daa4b7c28cc64`
@@ -13,21 +14,24 @@ This document defines the **live** T4 qualification evidence. Source CI, Helm re
 
 Do not reuse the result for another datastore type, vendor/model, firmware, transport, multipath policy, StorageClass parameter set, node OS/kernel, or topology unless that profile is separately qualified.
 
-## Prerequisites
+## Frozen release prerequisite
 
-Before running live tests, freeze and retain:
+Before live testing, create the real `packaging/layersentry/release-lock.json`. It must contain the exact release version/tag, the **frozen binary/chart source commit**, RKE2 pin, driver image digest and all enabled sidecar digests. Generate and retain:
 
-1. the exact LayerSentry source commit;
-2. the LayerSentry driver `image:tag@sha256` reference;
-3. exact sidecar digest references;
-4. the generated SBOM and provenance evidence;
-5. the offline image manifest;
-6. the selected storage-profile record;
-7. a dedicated qualification StorageClass with `provisioner: csi.layersentry.io`, `reclaimPolicy: Delete`, and expansion disabled for the current release profile;
-8. an immutable digest-pinned probe image available to the RKE2 cluster;
-9. a non-production or explicitly approved qualification cluster/backend capacity.
+1. the LayerSentry driver `image:tag@sha256` reference;
+2. exact sidecar digest references;
+3. the generated SBOM and SLSA provenance evidence;
+4. `source-provenance.json`;
+5. `release-artifacts.sha256`;
+6. the exact offline image manifest;
+7. the selected storage-profile record;
+8. a dedicated qualification StorageClass with `provisioner: csi.layersentry.io`, `reclaimPolicy: Delete`, and expansion disabled;
+9. an immutable digest-pinned probe image available to the RKE2 cluster;
+10. a non-production or explicitly approved qualification cluster/backend capacity.
 
-Do not run worker replacement, API fault injection, or controller disruption against an unrelated production workload.
+The production release model is deliberate: build from a frozen source commit, then allow only release-lock, qualification-matrix, evidence, and qualified-profile files to change before the release tag. Any executable/chart/workflow change after the frozen source commit invalidates the production tag gate and requires rebuilding/requalifying the image.
+
+Do not run worker replacement, API fault injection, or controller disruption against unrelated production workloads.
 
 ## Automated lifecycle/data-survival phases
 
@@ -46,28 +50,25 @@ python3 packaging/layersentry/live_qualification.py \
   --allow-controller-restart
 ```
 
-The baseline refuses the wrong RKE2 patch version and verifies:
-
-- `CSIDriver/csi.layersentry.io` exists;
-- every Ready node reports the exact RKE2 kubelet version;
-- every Ready node has the LayerSentry entry in `CSINode`;
-- controller and node CSI pods are Ready;
-- StorageClass ownership and current capability restrictions;
-- both `Immediate` and `WaitForFirstConsumer` binding modes;
-- PVC creation and PV binding;
-- bound PV `spec.csi.driver == csi.layersentry.io`;
-- pod mount;
-- recognizable marker write and checksum;
-- pod deletion/recreation with identical data;
-- explicit CSI controller pod restart with identical data;
-- detach with no matching `VolumeAttachment` remaining;
-- reattach with matching `VolumeAttachment` and identical data.
+The baseline refuses the wrong RKE2 patch version and verifies CSIDriver/CSINode discovery, Ready-node version consistency, StorageClass ownership, PVC/PV creation, mount, marker write/checksum, pod restart, controller restart, detach and reattach with identical data.
 
 The probe pod is non-root, drops all Linux capabilities, disables service-account token mounting, uses RuntimeDefault seccomp, and uses an `fsGroup` for writable filesystem volumes.
 
+Immediately after baseline, bind this qualification run to the exact frozen release images:
+
+```bash
+python3 packaging/layersentry/verify_live_release.py \
+  --kubeconfig /secure/path/rke2.yaml \
+  --release-lock packaging/layersentry/release-lock.json \
+  --evidence-dir evidence/t4/<profile>/<run> \
+  --phase baseline
+```
+
+This requires the exact reviewed controller container set (`opennebula-csi`, provisioner, attacher, liveness probe), exact reviewed node set (`opennebula-csi`, node-driver-registrar, liveness probe), digest references exactly matching the release lock, no resizer/snapshotter, no unexpected regular/init containers, all pods Ready, and node coverage on all Ready nodes. It emits `release_identity_baseline.json` with the same `run_id` and exact release-lock SHA256.
+
 ### 2. Node restart
 
-After baseline, restart **the reported Kubernetes node** using the approved OpenNebula/LayerSentry lifecycle. Do not replace it in this phase. Then run:
+Restart **the reported Kubernetes node** using the approved OpenNebula/LayerSentry lifecycle. Do not replace it in this phase. Then run:
 
 ```bash
 python3 packaging/layersentry/live_qualification.py \
@@ -93,7 +94,7 @@ The runner records the old node name/UID, removes the probe Pod, and requires th
 
 Use the authorized LayerSentry/OneKS worker replacement workflow. Replacement is an infrastructure lifecycle operation and is deliberately not implemented as an arbitrary shell command inside the CSI test runner.
 
-Then verify the replacement:
+Then verify replacement and data survival:
 
 ```bash
 python3 packaging/layersentry/live_qualification.py \
@@ -103,19 +104,67 @@ python3 packaging/layersentry/live_qualification.py \
   --replacement-node <replacement-kubernetes-node>
 ```
 
-PASS requires:
+PASS requires a Ready replacement node with changed node identity, LayerSentry CSINode registration, remount of the original PVC, and an identical marker checksum.
 
-- the replacement node is Ready;
-- the replacement has a different Kubernetes node UID (or a different name with the old node removed);
-- `CSINode` registers `csi.layersentry.io` on the replacement;
-- the test Pod mounts the original PVC on the replacement;
-- the marker checksum is identical to the pre-replacement checksum.
+After replacement, revalidate the exact running release:
 
-This produces the mandatory `worker_replacement` and `same_data_after_replacement` evidence.
+```bash
+python3 packaging/layersentry/verify_live_release.py \
+  --kubeconfig /secure/path/rke2.yaml \
+  --release-lock packaging/layersentry/release-lock.json \
+  --evidence-dir evidence/t4/<profile>/<run> \
+  --phase final
+```
 
-### 5. Delete/cleanup
+The baseline and final identity records must share the same run ID and exact release-lock SHA256. The production gate rejects mixed runs or a changed release lock.
 
-Run cleanup only after all fault/authorization evidence that needs the live PVC has been collected:
+### 5. Controlled failure/isolation tests
+
+The following remain mandatory production blockers and require deliberate fault/authorization scenarios:
+
+- `idempotent_retry`
+- `duplicate_operations`
+- `unknown_reconciliation`
+- `tenant_isolation`
+- `foreign_csi_isolation`
+
+A screenshot or statement such as “tested OK” is insufficient. Evidence must include request/object IDs, timestamps, expected/actual behavior, relevant Kubernetes/OpenNebula state and post-test data-integrity result.
+
+After a documented scenario passes, normalize it into the current qualification run with:
+
+```bash
+python3 packaging/layersentry/record_controlled_evidence.py \
+  --evidence-dir evidence/t4/<profile>/<run> \
+  --test-id <idempotent_retry|duplicate_operations|unknown_reconciliation|tenant_isolation|foreign_csi_isolation> \
+  --details-json /path/to/reviewed-details.json \
+  --confirm-pass
+```
+
+The helper never performs or infers a PASS; it only records an explicitly confirmed result and binds it to the existing state `run_id`, exact RKE2 target, CSI identity and StorageClass.
+
+#### Idempotent retry
+
+Cause a retry where the backend mutation may have happened but the caller cannot rely on the first acknowledgement. PASS requires one logical volume/attachment result, no duplicate backend resource, safe convergence and correct persistent data.
+
+#### Duplicate operations
+
+Generate genuinely overlapping/repeated CSI mutations for the same volume/target. PASS requires coalesced/rejected/idempotent resolution, no duplicate attachment/volume or persistent metadata drift, and successful remount/data verification.
+
+#### UNKNOWN reconciliation / lost acknowledgement
+
+Introduce a bounded, reversible communication failure after mutation can occur but before the caller can rely on the reply. PASS requires no blind destructive repetition, safe reconciliation/quarantine, no duplicate/double attachment and intact data after recovery.
+
+#### Tenant isolation
+
+Use two independently authorized tenant/user contexts. Tenant B's negative attempts against tenant A's LayerSentry/PVC-facing resources must be denied without mutation. Same-admin namespace relabeling is not sufficient.
+
+#### Foreign CSI isolation
+
+Use a disposable volume owned by an independent CSI plugin. LayerSentry reconciliation must ignore the foreign PV/VolumeAttachment during both normal and stale/ambiguous LayerSentry scenarios; the foreign volume must remain healthy and unchanged.
+
+### 6. Delete/cleanup
+
+Run cleanup after all fault/authorization evidence that needs the live PVC is collected:
 
 ```bash
 python3 packaging/layersentry/live_qualification.py \
@@ -126,74 +175,42 @@ python3 packaging/layersentry/live_qualification.py \
 
 PASS requires detach, PVC deletion, and disappearance of the dynamically provisioned PV under `reclaimPolicy: Delete`.
 
-## Controlled tests that are not automatically marked PASS
+## Current capability and topology restrictions
 
-The following tests remain production blockers until separately executed and evidenced. A screenshot or statement such as “tested OK” is not sufficient. Evidence must identify the run, exact source/image, request/object IDs, timestamps, expected behavior, actual behavior, and relevant Kubernetes/OpenNebula state before and after the fault.
+The current release does **not** offer expansion, snapshots, snapshot restore or clone. Keep those records explicitly `NOT_OFFERED` / `NOT_ADVERTISED`.
 
-### Idempotent retry
+The LayerSentry profile currently requires `controller.replicaCount: 1`. Multi-controller operation is not claimed as production HA because the driver and standard CSI sidecars use separate leader-election mechanisms; replica counts greater than one are rejected until that combined topology is explicitly qualified.
 
-Exercise at least one mutating CSI operation where the first attempt reaches the backend and the client/sidecar retries because the acknowledgement is lost or delayed. Acceptable operations include CreateVolume, ControllerPublishVolume, ControllerUnpublishVolume, or DeleteVolume depending on the selected profile.
+LayerSentry controller and node driver containers use the CSI liveness sidecar `/healthz` endpoint for Kubernetes liveness/readiness checks. This health behavior is LayerSentry-identity-scoped; legacy chart rendering remains unchanged.
 
-PASS requires:
+## Evidence acceptance and production promotion
 
-- one logical Kubernetes volume/attachment outcome;
-- no duplicate backend volume or attachment;
-- retry returns the existing/successful state or safely converges to it;
-- persistent data remains correct;
-- reconciler state returns to healthy without operator database edits.
+Before a production tag:
 
-Do **not** count a second `kubectl delete` returning NotFound as CSI idempotency evidence.
+- every mandatory lifecycle/failure/isolation test must be `PASS` with repository-relative JSON evidence;
+- `release_identity_baseline` and `release_identity_final` must both be `PASS`;
+- all mandatory evidence must share exactly one `run_id` and one StorageClass;
+- baseline/final identity evidence must match the exact frozen release-lock bytes and driver image;
+- `selected_storage_profile` / `selected_storage_profile_file` must identify the exact backend profile;
+- `release-lock.json` must contain real immutable digests and the frozen source commit;
+- SBOM, provenance, source-provenance, artifact-checksum and offline-manifest paths must be materialized;
+- run all three gates:
 
-### Duplicate operations
+```bash
+python3 packaging/layersentry/validate_qualification.py \
+  --matrix packaging/layersentry/qualification-matrix.json \
+  --release-lock packaging/layersentry/release-lock.json \
+  --evidence-root .
 
-Generate genuinely overlapping/repeated CSI mutations for the same volume/target through an approved test mechanism. Source-level operation-lock tests are not live evidence.
+python3 packaging/layersentry/validate_storage_profile.py \
+  --matrix packaging/layersentry/qualification-matrix.json \
+  --release-lock packaging/layersentry/release-lock.json \
+  --evidence-root .
 
-PASS requires:
+python3 packaging/layersentry/validate_live_evidence.py \
+  --matrix packaging/layersentry/qualification-matrix.json \
+  --release-lock packaging/layersentry/release-lock.json \
+  --evidence-root .
+```
 
-- duplicate requests are coalesced/rejected/idempotently resolved;
-- no duplicate OpenNebula disk attachment or second volume is created;
-- no persistent `VolumeAttachment`/backend metadata drift remains;
-- the workload can remount and verify the marker afterward.
-
-### UNKNOWN reconciliation / lost acknowledgement
-
-Introduce a bounded communication failure between the CSI controller and the OpenNebula API **after mutation can occur but before the caller can rely on the reply**. The fault mechanism must be reversible and scoped to the qualification driver/controller; do not blackhole unrelated management traffic.
-
-Capture Kubernetes events/logs and OpenNebula object state throughout the test.
-
-PASS requires:
-
-- the driver does not blindly repeat an unsafe mutation;
-- the reconciler/diagnostic path determines or safely quarantines ambiguous state;
-- no double attachment, duplicate volume, or destructive cleanup occurs;
-- after communication is restored, state converges or remains explicitly quarantined for bounded operator review;
-- the original marker is readable after safe recovery.
-
-### Tenant isolation
-
-Use two independently authorized tenant/user contexts that cannot administer each other's qualification resources. Do not emulate this by merely changing a namespace label while using the same admin credentials.
-
-PASS requires negative attempts from tenant B against tenant A's PVC/PV-facing LayerSentry workflow and any exposed LayerSentry/API operation to be denied without mutation. Capture the denied request, authorization identity, resource IDs, and post-test state.
-
-### Foreign CSI isolation
-
-On a qualification cluster where an independent CSI plugin is installed, use a disposable volume owned by that foreign driver.
-
-PASS requires the LayerSentry attachment reconciler to ignore its PV and VolumeAttachment during normal scans and during a stale/ambiguous LayerSentry attachment scenario. The foreign volume must remain mounted/healthy and unchanged. Do not create fake ownership by editing a bound PV's `spec.csi.driver`.
-
-## Optional capabilities
-
-Current LayerSentry release profile does not offer expansion, snapshots, snapshot restore, or clone. Keep the relevant matrix records explicitly `NOT_OFFERED` / `NOT_ADVERTISED`.
-
-If a future backend profile promotes one of these capabilities, first make a deliberate source/release-profile change, then run the matching live data-integrity/recovery tests. Never enable them through site-values overrides alone.
-
-## Evidence acceptance
-
-The production validator requires repository-relative, existing, nonempty evidence paths. Before a production tag:
-
-- set every mandatory passed test to `PASS` in `qualification-matrix.json` and list its evidence path(s);
-- set `selected_storage_profile` to the exact profile ID;
-- freeze `release-lock.json` with real image digests and the same profile ID;
-- record generated SBOM, provenance, and offline-manifest paths;
-- run `validate_qualification.py --evidence-root .`;
-- keep stateful workloads `NOT_QUALIFIED` if **any** mandatory test remains missing, ambiguous, or unsupported.
+If any mandatory test, exact-image checkpoint, artifact or backend-profile gate is missing/ambiguous, stateful workloads remain `NOT_QUALIFIED`.
